@@ -320,6 +320,27 @@ function getPackageById(id) {
   return db.prepare('SELECT * FROM packages WHERE id=?').get(id);
 }
 
+/**
+ * Rapikan pengaturan tampilan paket di halaman depan publik.
+ *
+ * Catatan checkbox HTML: kotak yang TIDAK dicentang sama sekali tidak dikirim
+ * browser. Karena itu keberadaan nilailah yang menentukan, bukan isinya.
+ */
+function parseLandingOptions(data) {
+  const truthy = (v) => v === 1 || v === '1' || v === true || v === 'true' || v === 'on';
+
+  const pinEnabled = truthy(data.pin_enabled) ? 1 : 0;
+  let pinText = String(data.pin_text ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (pinText.length > 30) pinText = pinText.slice(0, 30);      // jaga agar label tidak melebar
+  if (!pinText) pinText = 'Terpopuler';                          // cadangan bila dikosongkan
+
+  return {
+    showOnLanding: truthy(data.show_on_landing) ? 1 : 0,
+    pinEnabled,
+    pinText
+  };
+}
+
 function createPackage(data) {
   const down = Math.round(parseFloat(data.speed_down || 0) * 1000);
   const up = Math.round(parseFloat(data.speed_up || 0) * 1000);
@@ -336,6 +357,7 @@ function createPackage(data) {
   const useUso = data.use_uso ? 1 : 0;
   const usoPercentage = parseFloat(data.uso_percentage || 1.75);
   const routerId = data.router_id ? parseInt(data.router_id, 10) : null;
+  const { showOnLanding, pinEnabled, pinText } = parseLandingOptions(data);
 
   return db.prepare(`
     INSERT INTO packages (
@@ -344,16 +366,18 @@ function createPackage(data) {
       use_night_speed, night_profile_name, night_speed_down, night_speed_up, 
       use_fup, fup_profile_name, fup_limit_gb, fup_speed_down, 
       description,
-      use_ppn, ppn_percentage, use_uso, uso_percentage, router_id
+      use_ppn, ppn_percentage, use_uso, uso_percentage, router_id,
+      show_on_landing, pin_enabled, pin_text
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     data.name, parseInt(data.price) || 0, promoPrice, promoCycles, prorateFirst,
     down, up,
     data.use_night_speed ? 1 : 0, data.night_profile_name || null, n_down, n_up,
     data.use_fup ? 1 : 0, data.fup_profile_name || null, f_limit, f_down,
     data.description || '',
-    usePpn, ppnPercentage, useUso, usoPercentage, routerId
+    usePpn, ppnPercentage, useUso, usoPercentage, routerId,
+    showOnLanding, pinEnabled, pinText
   );
 }
 
@@ -378,6 +402,7 @@ function updatePackage(id, data) {
   const useUso = data.use_uso ? 1 : 0;
   const usoPercentage = parseFloat(data.uso_percentage || 1.75);
   const routerId = data.router_id ? parseInt(data.router_id, 10) : null;
+  const { showOnLanding, pinEnabled, pinText } = parseLandingOptions(data);
 
   return db.prepare(`
     UPDATE packages 
@@ -386,7 +411,8 @@ function updatePackage(id, data) {
         use_night_speed=?, night_profile_name=?, night_speed_down=?, night_speed_up=?, 
         use_fup=?, fup_profile_name=?, fup_limit_gb=?, fup_speed_down=?, 
         description=?, is_active=?,
-        use_ppn=?, ppn_percentage=?, use_uso=?, uso_percentage=?, router_id=?
+        use_ppn=?, ppn_percentage=?, use_uso=?, uso_percentage=?, router_id=?,
+        show_on_landing=?, pin_enabled=?, pin_text=?
     WHERE id=?
   `).run(
     data.name, parseInt(data.price) || 0, promoPrice, promoCycles, prorateFirst,
@@ -395,6 +421,7 @@ function updatePackage(id, data) {
     data.use_fup ? 1 : 0, data.fup_profile_name || null, f_limit, f_down,
     data.description || '', data.is_active == '1' ? 1 : 0,
     usePpn, ppnPercentage, useUso, usoPercentage, routerId,
+    showOnLanding, pinEnabled, pinText,
     id
   );
 }

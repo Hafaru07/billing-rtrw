@@ -96,6 +96,9 @@ db.exec(`
     speed_up INTEGER DEFAULT 0,
     description TEXT DEFAULT '',
     is_active INTEGER DEFAULT 1,
+    show_on_landing INTEGER DEFAULT 1,   -- tampil di halaman depan publik
+    pin_enabled INTEGER DEFAULT 0,       -- tampilkan label sorotan
+    pin_text TEXT DEFAULT 'Terpopuler',  -- tulisan pada label
     created_at DATETIME DEFAULT (NOW_LOCAL())
   );
 
@@ -717,6 +720,13 @@ try { db.exec("ALTER TABLE odps ADD COLUMN port_capacity INTEGER NOT NULL DEFAUL
 try { db.exec("ALTER TABLE odps ADD COLUMN server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL"); } catch (e) {}
 try { db.exec("ALTER TABLE odps ADD COLUMN pole_id INTEGER REFERENCES poles(id) ON DELETE SET NULL"); } catch (e) {}
 try { db.exec("ALTER TABLE odps ADD COLUMN cable_path TEXT"); } catch (e) {}
+
+// Tampilan paket di halaman depan publik.
+// show_on_landing default 1 supaya paket yang sudah ada tetap tampil
+// seperti sebelumnya setelah pembaruan (tidak ada yang tiba-tiba hilang).
+try { db.exec("ALTER TABLE packages ADD COLUMN show_on_landing INTEGER DEFAULT 1"); } catch (e) {}
+try { db.exec("ALTER TABLE packages ADD COLUMN pin_enabled INTEGER DEFAULT 0"); } catch (e) {}
+try { db.exec("ALTER TABLE packages ADD COLUMN pin_text TEXT DEFAULT 'Terpopuler'"); } catch (e) {}
 
 // Kolom untuk PPN & ULO/USO pada tabel packages
 try { db.exec("ALTER TABLE packages ADD COLUMN use_ppn INTEGER DEFAULT 0"); } catch (e) {}

@@ -742,7 +742,13 @@
         </p>
       </div>
 
-      <% const pkgs = (typeof packages !== 'undefined' && Array.isArray(packages)) ? packages : []; %>
+      <%
+        // Hanya tampilkan paket yang dicentang "Tampilkan paket ini di halaman depan".
+        // Paket lama (kolom belum ada / null) dianggap TAMPIL, supaya tidak ada
+        // yang tiba-tiba hilang setelah pembaruan.
+        const allPkgs = (typeof packages !== 'undefined' && Array.isArray(packages)) ? packages : [];
+        const pkgs = allPkgs.filter(p => p.show_on_landing === undefined || p.show_on_landing === null || Number(p.show_on_landing) === 1);
+      %>
       <% if (pkgs.length === 0) { %>
         <div class="glass-card text-center p-5 max-w-lg mx-auto">
           <i class="bi bi-info-circle fs-1 text-info mb-3 d-block"></i>
@@ -755,8 +761,14 @@
           <% list.forEach((p, index) => { %>
             <div class="col-md-6 col-lg-4">
               <div class="glass-card pkg-card">
-                <% if (index === Math.floor(list.length / 2)) { %>
-                  <div class="pkg-badge-popular"><i class="bi bi-star-fill me-1"></i> Terpopuler</div>
+                <%
+                  // Pin diatur per paket dari menu Paket Internet, bukan lagi
+                  // dipaku ke paket urutan tengah.
+                  const pinOn = Number(p.pin_enabled) === 1;
+                  const pinLabel = String(p.pin_text || '').trim() || 'Terpopuler';
+                %>
+                <% if (pinOn) { %>
+                  <div class="pkg-badge-popular"><i class="bi bi-star-fill me-1"></i> <%= pinLabel %></div>
                 <% } %>
 
                 <div class="pkg-speed-tag">

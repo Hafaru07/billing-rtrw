@@ -164,7 +164,33 @@
           </div>
         </div>
         <div class="fg"><label class="fl"><%= t('admin.packages.form.description', 'Deskripsi') %></label><textarea class="fc" name="description" placeholder="<%= t('admin.packages.form.optional', 'Opsional...') %>"></textarea></div>
-        
+
+        <!-- Tampilan di Halaman Depan (Tambah) -->
+        <div style="background: rgba(16,185,129,0.06); padding: 12px 14px; border-radius: 10px; margin-top: 10px;">
+          <div class="fw6" style="font-size:12px;margin-bottom:8px;color:#10b981">
+            <i class="bi bi-window"></i> Tampilan di Halaman Depan
+          </div>
+
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; margin-bottom:8px; cursor:pointer">
+            <input type="checkbox" name="show_on_landing" id="add_show_landing" value="1" checked>
+            Tampilkan paket ini di halaman depan
+          </label>
+
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; margin-bottom:8px; cursor:pointer">
+            <input type="checkbox" name="pin_enabled" id="add_pin_enabled" value="1" onchange="toggleAddPin()">
+            Aktifkan pin / label sorotan
+          </label>
+
+          <div class="fg" id="add_pin_text_wrap" style="display:none; margin-bottom:0">
+            <label class="fl">Teks yang ditampilkan di pin paket</label>
+            <input class="fc" name="pin_text" id="add_pin_text" maxlength="30"
+                   placeholder="Contoh: Terpopuler, Hemat, Paling Laris" value="Terpopuler">
+            <div style="font-size:10px;color:var(--muted);margin-top:4px">
+              Maksimal 30 karakter. Boleh dipasang di lebih dari satu paket.
+            </div>
+          </div>
+        </div>
+
         <!-- Dynamic Speed & FUP Section -->
         <div style="background: rgba(0,0,0,0.02); padding: 15px; border-radius: 12px; margin-top: 15px;">
           <div class="flex ai-c mb8" style="gap:10px">
@@ -286,6 +312,32 @@
         </div>
         <div class="fg"><label class="fl"><%= t('admin.packages.form.description', 'Deskripsi') %></label><textarea class="fc" name="description" id="e_desc"></textarea></div>
 
+        <!-- Tampilan di Halaman Depan (Edit) -->
+        <div style="background: rgba(16,185,129,0.06); padding: 12px 14px; border-radius: 10px; margin-top: 10px;">
+          <div class="fw6" style="font-size:12px;margin-bottom:8px;color:#10b981">
+            <i class="bi bi-window"></i> Tampilan di Halaman Depan
+          </div>
+
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; margin-bottom:8px; cursor:pointer">
+            <input type="checkbox" name="show_on_landing" id="e_show_landing" value="1">
+            Tampilkan paket ini di halaman depan
+          </label>
+
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; margin-bottom:8px; cursor:pointer">
+            <input type="checkbox" name="pin_enabled" id="e_pin_enabled" value="1" onchange="toggleEditPin()">
+            Aktifkan pin / label sorotan
+          </label>
+
+          <div class="fg" id="e_pin_text_wrap" style="display:none; margin-bottom:0">
+            <label class="fl">Teks yang ditampilkan di pin paket</label>
+            <input class="fc" name="pin_text" id="e_pin_text" maxlength="30"
+                   placeholder="Contoh: Terpopuler, Hemat, Paling Laris">
+            <div style="font-size:10px;color:var(--muted);margin-top:4px">
+              Maksimal 30 karakter. Boleh dipasang di lebih dari satu paket.
+            </div>
+          </div>
+        </div>
+
         <!-- Dynamic Speed & FUP Section (Edit) -->
         <div style="background: rgba(0,0,0,0.02); padding: 15px; border-radius: 12px; margin-top: 15px;">
           <div class="flex ai-c mb8" style="gap:10px">
@@ -374,6 +426,16 @@ function editPkg(idx) {
 
   document.getElementById('e_active').value=p.is_active?'1':'0';
   document.getElementById('e_desc').value=p.description||'';
+
+  // Tampilan di halaman depan.
+  // Paket lama (sebelum fitur ini ada) bernilai undefined -> anggap TAMPIL,
+  // supaya tidak ada paket yang tiba-tiba hilang setelah pembaruan.
+  document.getElementById('e_show_landing').checked =
+    (p.show_on_landing === undefined || p.show_on_landing === null) ? true : !!p.show_on_landing;
+  document.getElementById('e_pin_enabled').checked = !!p.pin_enabled;
+  document.getElementById('e_pin_text').value = p.pin_text || 'Terpopuler';
+  toggleEditPin();
+
   openModal('editModal');
 }
 
@@ -381,6 +443,10 @@ function toggleAddNight() { document.getElementById('add_night_fields').style.di
 function toggleAddFup() { document.getElementById('add_fup_fields').style.display = document.getElementById('add_use_fup').checked ? 'block' : 'none'; }
 function toggleEditNight() { document.getElementById('e_night_fields').style.display = document.getElementById('e_use_night').checked ? 'block' : 'none'; }
 function toggleEditFup() { document.getElementById('e_fup_fields').style.display = document.getElementById('e_use_fup').checked ? 'block' : 'none'; }
+
+// Form teks pin hanya tampil saat pin diaktifkan
+function toggleAddPin() { document.getElementById('add_pin_text_wrap').style.display = document.getElementById('add_pin_enabled').checked ? 'block' : 'none'; }
+function toggleEditPin() { document.getElementById('e_pin_text_wrap').style.display = document.getElementById('e_pin_enabled').checked ? 'block' : 'none'; }
 setTimeout(()=>document.querySelectorAll('.alert').forEach(a=>a.style.display='none'),4000);
 
 // Load MikroTik profiles into select dropdowns
