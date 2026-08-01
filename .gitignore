@@ -1,0 +1,75 @@
+# ============================================================================
+#  .gitignore — billing-rtrw
+# ----------------------------------------------------------------------------
+#  Aturannya sederhana:
+#    KODE  -> masuk git  (boleh ditimpa saat git pull)
+#    DATA  -> jangan     (milik tiap server, tidak boleh tertimpa)
+#
+#  Berkas di bawah ini SENGAJA tidak diikutkan supaya:
+#    1. Rahasia (password, API key, sesi WhatsApp) tidak bocor ke GitHub.
+#    2. `git pull` di server produksi tidak menimpa pengaturan & database Anda.
+# ============================================================================
+
+# ── Dependensi ──────────────────────────────────────────────────────────────
+node_modules/
+package-lock.json.bak
+.npm/
+
+# ── RAHASIA — jangan pernah di-commit ───────────────────────────────────────
+# settings.json memuat password admin, session_secret, API key payment
+# gateway, token Telegram, dll. Pakai settings.example.json sebagai contoh.
+settings.json
+settings.json.bak
+.env
+.env.*
+!env-example.txt
+
+# ── Sesi login WhatsApp (Baileys) ───────────────────────────────────────────
+# Berisi kredensial perangkat. Bocor = bot WhatsApp Anda bisa dibajak.
+auth_info_baileys/
+auth_info*/
+data/wa-lid-map.json
+data/
+
+# ── Database ────────────────────────────────────────────────────────────────
+# Data pelanggan, tagihan, pembayaran. Milik tiap server.
+database/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+database.sqlite
+
+# ── Berkas unggahan pengguna ────────────────────────────────────────────────
+# Bukti bayar, foto tiket, gambar QRIS, slide promo.
+public/uploads/
+!public/uploads/.gitkeep
+
+# ── Identitas visual per-instalasi ──────────────────────────────────────────
+# Logo & tanda tangan tiap ISP berbeda; jangan sampai tertimpa saat pull.
+public/img/logo.png
+public/img/signature.png
+
+# ── Log & cadangan ──────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+backups/
+backup/
+*.bak
+*.old
+*.orig
+
+# ── Berkas sistem / editor ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── PM2 ─────────────────────────────────────────────────────────────────────
+.pm2/
+ecosystem.config.local.js

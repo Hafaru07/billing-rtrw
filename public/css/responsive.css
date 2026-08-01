@@ -1,0 +1,221 @@
+/* ============================================================================
+   LAPISAN PENGERASAN RESPONSIF
+   ----------------------------------------------------------------------------
+   Dimuat SETELAH admin.css / bootstrap / <style> tiap halaman, sehingga bisa
+   menimpa gaya bawaan halaman tanpa perlu mengedit puluhan berkas view.
+
+   Prinsip:
+   1. Desktop TIDAK disentuh sama sekali. Seluruh aturan berada di dalam
+      media query maksimal 992px, kecuali beberapa pengaman universal yang
+      memang aman di semua ukuran layar.
+   2. Banyak halaman memakai inline style (grid kolom tetap, lebar px tetap)
+      yang menembus CSS biasa. Itu dijinakkan lewat selektor atribut
+      [style*="..."] yang menyasar pola spesifik — bukan pukul rata.
+   3. Tabel lebar tidak dipaksa menjadi kartu (butuh perubahan markup di tiap
+      view), melainkan diberi area gulir horizontal yang nyaman disentuh.
+   ========================================================================== */
+
+/* ─── PENGAMAN UNIVERSAL (aman di semua ukuran) ───────────────────────────── */
+
+/* Media & tabel tidak boleh melebihi wadahnya */
+img, video, canvas, svg, iframe { max-width: 100%; }
+img, video { height: auto; }
+
+/* Anak grid/flex secara bawaan punya min-width:auto sehingga menolak menyusut
+   dan menyebabkan halaman melebar. Ini penyebab scroll horizontal tersering. */
+.card, .card-bd, .mw, .page, .srow, .form-row, .form-row2, .form-row3 { min-width: 0; }
+
+/* Teks panjang tanpa spasi (URL, token, MAC, SSID) tidak merusak tata letak */
+.dtbl td, .card-bd, .mbody, .alert, .hint { overflow-wrap: anywhere; }
+
+/* Elemen bergulir horizontal terasa halus di layar sentuh */
+.tbl-wrap, .table-responsive, .rt-scroll { -webkit-overflow-scrolling: touch; }
+
+
+/* ─── TABLET & PONSEL (≤ 992px) ──────────────────────────────────────────── */
+@media (max-width: 992px) {
+
+  /* Kunci scroll horizontal tingkat halaman. Konten lebar tetap bisa
+     digulir, tapi lewat wadahnya sendiri (.tbl-wrap), bukan seluruh layar. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+  .mw { overflow-x: hidden; }
+
+  /* --- Inline grid kolom tetap dipaksa menumpuk ---
+     Menyasar pola repeat(2..6, ...) saja, sehingga tata letak seperti
+     "1fr auto" (label + tombol) tidak ikut rusak. */
+  [style*="repeat(2"], [style*="repeat(3"], [style*="repeat(4"],
+  [style*="repeat(5"], [style*="repeat(6"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Pola dua/tiga kolom pecahan yang tidak memakai repeat().
+     Catatan: pola repeat(auto-fit/auto-fill, minmax(...)) sengaja TIDAK
+     disentuh karena sudah menyusut sendiri di layar sempit. */
+  [style*="1fr 1fr"], [style*="2fr 1fr"], [style*="1fr 2fr"],
+  [style*="3fr 1fr"], [style*="1fr 3fr"], [style*="1.5fr 1fr"],
+  [style*="1.2fr 0.8fr"], [style*="0.8fr 1.2fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Tata letak tiga kolom pada peta jaringan */
+  [style*="280px 1fr 340px"], [style*="280px 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* --- Lebar tetap dijinakkan ---
+     Cocok juga untuk min-width / max-width karena sama-sama mengandung
+     "width:". Hasilnya elemen boleh menyusut, tidak boleh melebihi layar. */
+  [style*="width:"], [style*="width :"] { max-width: 100% !important; }
+  [style*="min-width"] { min-width: 0 !important; }
+
+  /* Baris flex yang tidak diberi flex-wrap akan meluber */
+  .srow, .card-hd, .tb-right, .filter-bar, .odps-actions, .popup-actions,
+  .traffic-head, .traffic-head-right, .mf {
+    flex-wrap: wrap;
+  }
+
+  /* Judul kartu + tombol aksinya diberi jarak saat membungkus */
+  .card-hd { gap: 10px; }
+
+  /* Kolom aksi pada tabel: tombol ikon dibiarkan membungkus rapi */
+  .dtbl td .btn, .dtbl td form { vertical-align: middle; }
+  .dtbl td form { display: inline-block; margin: 2px 1px; }
+}
+
+
+/* ─── PONSEL (≤ 768px) ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* Cegah iOS Safari melakukan zoom otomatis saat input difokuskan.
+     Zoom hanya terpicu bila ukuran font kurang dari 16px. */
+  input, select, textarea, .fc, .fs, .form-control, .form-select {
+    font-size: 16px !important;
+  }
+
+  /* Target sentuh nyaman (pedoman umum: minimal 36-44px) */
+  .btn, .btn-sm, .bn-item, .tab-btn, .node-tab { min-height: 36px; }
+  .btn-icon { min-width: 36px; min-height: 36px; justify-content: center; }
+  .fc, .fs, .form-control, .form-select { min-height: 40px; }
+
+  /* Tabel: beri isyarat visual bahwa area bisa digulir ke samping */
+  .tbl-wrap, .table-responsive {
+    overflow-x: auto;
+    background:
+      linear-gradient(90deg, var(--bg2, #161b22) 30%, rgba(0,0,0,0)),
+      linear-gradient(90deg, rgba(0,0,0,0), var(--bg2, #161b22) 70%) 100% 0,
+      radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.28), transparent),
+      radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.28), transparent) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 34px 100%, 34px 100%, 14px 100%, 14px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+
+  /* --- Tabel tanpa pembungkus gulir ---
+     Sebagian halaman menaruh <table> langsung tanpa wadah bergulir, sehingga
+     tabel lebar mendorong seluruh halaman melebar. Menjadikan tabel itu
+     sendiri sebagai kotak bergulir memperbaikinya tanpa mengubah markup.
+     Tabel yang SUDAH punya pembungkus dikembalikan ke perilaku normal di
+     aturan berikutnya agar tidak ada gulir ganda. */
+  .noc-table, .onu-table-v2, .tbl, .dtbl,
+  table.table, .odps-table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Reset: tabel di dalam wadah bergulir tetap tabel biasa */
+  .tbl-wrap > .dtbl, .tbl-wrap > table,
+  .table-responsive > table, .table-responsive > .dtbl,
+  .table-container > table,
+  .odps-table-wrap > .odps-table {
+    display: table;
+    overflow-x: visible;
+  }
+
+  /* Tombol dalam footer modal memenuhi lebar agar mudah ditekan */
+  .mf { flex-direction: column-reverse; align-items: stretch; }
+  .mf .btn { width: 100%; justify-content: center; }
+
+  /* Baris pencarian/filter menumpuk penuh */
+  .srow > *, .filter-bar > * { flex: 1 1 100%; min-width: 0; }
+  .srow .btn, .filter-bar .btn { flex: 0 0 auto; }
+
+  /* Grid statistik & aksi cepat */
+  .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .quick-actions-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Kartu grafik trafik dashboard menumpuk */
+  .traffic-grid { grid-template-columns: 1fr !important; }
+
+  /* Peta diberi tinggi wajar, tidak memakan seluruh layar */
+  #map, #tech-map, .leaflet-container { min-height: 320px; }
+  #picker-map, #edit-picker-map,
+  #server-picker-map, #server-edit-picker-map,
+  #pole-picker-map, #pole-edit-picker-map { height: 200px !important; }
+  #cable-drawing-map { height: 320px !important; }
+
+  /* Panel daftar node pada peta */
+  .odps-table-wrap { max-height: 260px; }
+  .node-tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .node-tab { flex: 0 0 auto; }
+}
+
+
+/* ─── PONSEL KECIL (≤ 576px) ─────────────────────────────────────────────── */
+@media (max-width: 576px) {
+
+  /* Angka besar pada kartu statistik dikecilkan agar tidak terpotong */
+  .sc { padding: 14px; }
+  .sc-val { font-size: 21px; }
+  .sc-icon { font-size: 20px; top: 12px; right: 12px; }
+
+  /* Kartu statistik satu kolom bila isinya panjang */
+  .stat-grid { gap: 9px; }
+
+  /* Judul & topbar */
+  .card-hd { padding: 12px 14px; }
+  .card-bd { padding: 14px; }
+  .card-hd h6 { font-size: 12px; }
+
+  /* Tombol berderet di header kartu jangan sampai memaksa lebar */
+  .card-hd .btn { padding: 6px 10px; font-size: 12px; }
+
+  /* Modal tampil sebagai lembar bawah (sudah diatur admin.css),
+     di sini hanya merapikan isian di dalamnya. */
+  .mbody { padding: 14px; }
+  .mh { padding: 14px; }
+
+  /* Tabel lebih padat agar lebih banyak kolom terlihat */
+  .dtbl { font-size: 12px; }
+  .dtbl th, .dtbl td { padding: 8px 9px; }
+
+  /* Elemen dengan lebar tetap besar (mis. kanvas grafik) */
+  canvas { max-width: 100% !important; height: auto !important; }
+}
+
+
+/* ─── PORTAL BERBASIS BOOTSTRAP (teknisi/agen/kolektor/pelanggan) ────────── */
+@media (max-width: 768px) {
+  .container, .container-fluid { padding-left: 12px; padding-right: 12px; }
+
+  /* Bootstrap table di dalam card sering meluber tanpa .table-responsive */
+  .card > .table, .card-body > .table { display: block; overflow-x: auto; }
+
+  /* Baris tombol Bootstrap */
+  .btn-group { flex-wrap: wrap; }
+
+  /* Modal Bootstrap lebih lega di layar kecil */
+  .modal-dialog { margin: 8px; }
+}
+
+
+/* ─── SAAT MENCETAK ──────────────────────────────────────────────────────── */
+@media print {
+  /* Elemen navigasi tidak ikut tercetak di halaman mana pun */
+  .sidebar, .sidebar-overlay, .bottom-nav, .topbar, .hb-menu, .toolbar {
+    display: none !important;
+  }
+  .mw { margin-left: 0 !important; height: auto !important; overflow: visible !important; }
+  body { height: auto !important; overflow: visible !important; display: block !important; }
+}

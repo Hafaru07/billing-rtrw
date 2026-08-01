@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="<%= typeof lang !== 'undefined' ? lang : 'id' %>">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laporan Laba Rugi <%= filterYear %> — <%= company %></title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink:      #0f172a;
+      --ink-soft: #475569;
+      --muted:    #94a3b8;
+      --line:     #e2e8f0;
+      --line-2:   #f1f5f9;
+      --accent:   #2563eb;
+      --income:   #059669;
+      --expense:  #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #eef2f7; color: var(--ink);
+      font-size: 13px; line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      padding: 24px 16px 60px;
+    }
+
+    /* ─── Toolbar (layar saja) ─── */
+    .toolbar { max-width: 210mm; margin: 0 auto 16px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    .tb-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 9px 16px; border-radius: 9px; border: 1px solid var(--line);
+      background: #fff; color: var(--ink); font-size: 13px; font-weight: 600;
+      font-family: inherit; cursor: pointer; text-decoration: none;
+      box-shadow: 0 1px 2px rgba(15,23,42,.05); transition: all .15s;
+    }
+    .tb-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tb-btn.primary:hover { background: #1d4ed8; color: #fff; }
+
+    /* ─── Lembar ─── */
+    .sheet {
+      width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff;
+      padding: 16mm 15mm; display: flex; flex-direction: column;
+      box-shadow: 0 10px 40px rgba(15,23,42,.12); border-radius: 4px;
+    }
+
+    /* ─── Header ─── */
+    .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+    .brand { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+    .brand-logo { width: 50px; height: 50px; object-fit: contain; flex-shrink: 0; }
+    .brand-fallback {
+      width: 50px; height: 50px; border-radius: 12px; flex-shrink: 0;
+      background: var(--accent); color: #fff; display: flex;
+      align-items: center; justify-content: center; font-size: 21px; font-weight: 800;
+    }
+    .brand-name { font-size: 16px; font-weight: 800; letter-spacing: -.3px; line-height: 1.25; }
+    .brand-meta { font-size: 10.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.6; }
+
+    .doc { text-align: right; flex-shrink: 0; }
+    .doc-label {
+      font-size: 15px; font-weight: 800; letter-spacing: 1.6px;
+      color: var(--accent); text-transform: uppercase; line-height: 1.2;
+    }
+    .doc-period { font-size: 12px; font-weight: 700; margin-top: 6px; }
+    .doc-gen { font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
+
+    .rule { height: 2px; background: var(--ink); margin-top: 14px; }
+
+    /* ─── Ringkasan ─── */
+    .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
+    .sm {
+      border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .sm-label {
+      font-size: 9px; font-weight: 700; letter-spacing: .9px;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .sm-val { font-size: 17px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+    .sm.in  { background: #ecfdf5; border-color: #a7f3d0; }
+    .sm.in  .sm-val { color: var(--income); }
+    .sm.out { background: #fef2f2; border-color: #fecaca; }
+    .sm.out .sm-val { color: var(--expense); }
+    .sm.net { background: #eff6ff; border-color: #bfdbfe; }
+    .sm.net .sm-val { color: var(--accent); }
+    .sm.net.loss { background: #fef2f2; border-color: #fecaca; }
+    .sm.net.loss .sm-val { color: var(--expense); }
+
+    /* ─── Bagian & tabel ─── */
+    .sec { margin-top: 20px; }
+    .sec-title {
+      font-size: 11px; font-weight: 800; letter-spacing: .8px;
+      text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+      padding-bottom: 7px; border-bottom: 1.5px solid var(--ink);
+    }
+    .sec-title .dot { width: 8px; height: 8px; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .dot-in  { background: var(--income); }
+    .dot-out { background: var(--expense); }
+
+    table.rep { width: 100%; border-collapse: collapse; }
+    table.rep thead th {
+      font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+      color: var(--muted); text-align: left; padding: 8px 0 7px;
+      border-bottom: 1px solid var(--line);
+    }
+    table.rep thead th.num { text-align: right; }
+    table.rep thead th.ctr { text-align: center; }
+    table.rep tbody td { padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: 12.5px; }
+    table.rep tbody td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.rep tbody td.ctr { text-align: center; color: var(--ink-soft); }
+    table.rep tbody tr:last-child td { border-bottom: none; }
+    .cat-name { font-weight: 600; }
+
+    /* Bar proporsi tipis di bawah nama kategori */
+    .bar { height: 3px; border-radius: 2px; background: var(--line-2); margin-top: 5px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .bar.in  > span { background: var(--income); }
+    .bar.out > span { background: var(--expense); }
+    .pct { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    tfoot td {
+      padding: 9px 0; border-top: 1.5px solid var(--ink); font-weight: 800; font-size: 12.5px;
+    }
+    tfoot td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .empty { padding: 16px 0; text-align: center; color: var(--muted); font-size: 12px; font-style: italic; }
+
+    /* ─── Kotak laba bersih ─── */
+    .net-box {
+      margin-top: 20px; border: 1.5px solid var(--accent); border-radius: 10px;
+      padding: 13px 16px; display: flex; justify-content: space-between;
+      align-items: center; gap: 16px; background: #eff6ff;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .net-box.loss { border-color: var(--expense); background: #fef2f2; }
+    .net-label { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-soft); }
+    .net-sub { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+    .net-val { font-size: 22px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.5px; white-space: nowrap; }
+    .net-box.loss .net-val { color: var(--expense); }
+    .terbilang { margin-top: 8px; font-size: 10.5px; color: var(--ink-soft); font-style: italic; }
+
+    /* ─── Tanda tangan ─── */
+    .sign-row { display: flex; justify-content: flex-end; margin-top: 24px; }
+    .sign { width: 58mm; text-align: center; }
+    .sign-cap { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+    .sign-place { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+    .sign-area { height: 18mm; display: flex; align-items: flex-end; justify-content: center; margin: 6px 0 4px; }
+    .sign-img { max-width: 48mm; max-height: 18mm; object-fit: contain; }
+    .sign-ph {
+      width: 48mm; height: 18mm; border: 1px dashed var(--line); border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; color: var(--muted); text-align: center; line-height: 1.4; padding: 4px;
+    }
+    .sign-name { font-weight: 700; font-size: 12px; border-top: 1px solid var(--ink); padding-top: 6px; }
+    .sign-role { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+
+    /* ─── Footer ─── */
+    .foot {
+      margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+      display: flex; justify-content: space-between; gap: 16px;
+      font-size: 9.5px; color: var(--muted);
+    }
+
+    /* ─── Cetak ─── */
+    @page { size: A4; margin: 0; }
+    @media print {
+      /* margin 0 di atas menghapus header/footer bawaan browser
+         (tanggal, judul, URL, nomor halaman) */
+      body { background: #fff; padding: 0; }
+      .toolbar { display: none !important; }
+      .sheet { width: 210mm; margin: 0; box-shadow: none; border-radius: 0; padding: 13mm 13mm 11mm; }
+
+      /* Jarak dirapatkan agar laporan dengan jumlah kategori wajar
+         (sekitar 3 pemasukan + 8 pengeluaran) tetap muat satu halaman. */
+      .summary   { margin-top: 14px; gap: 8px; }
+      .sm        { padding: 10px 12px; }
+      .sm-val    { font-size: 16px; }
+      .sec       { margin-top: 14px; }
+      table.rep thead th { padding: 7px 0 6px; }
+      table.rep tbody td { padding: 6px 0; }
+      .bar       { margin-top: 4px; }
+      tfoot td   { padding: 8px 0; }
+      .net-box   { margin-top: 14px; padding: 10px 14px; }
+      .net-val   { font-size: 20px; }
+      .sign-row  { margin-top: 16px; }
+      .sign-area { height: 15mm; margin: 5px 0 4px; }
+      .sign-img, .sign-ph { max-height: 15mm; }
+      .sign-ph   { height: 15mm; }
+      .foot      { padding-top: 9px; }
+
+      /* Kepala tabel diulang bila laporan sampai berlanjut ke halaman berikutnya */
+      table.rep thead { display: table-header-group; }
+      table.rep tfoot { display: table-row-group; }
+      table.rep tr { page-break-inside: avoid; break-inside: avoid; }
+
+      /* Blok utuh tidak boleh terbelah antar halaman */
+      .summary, .net-box, .sign-row, .sec-title { page-break-inside: avoid; break-inside: avoid; }
+      .sec-title { page-break-after: avoid; break-after: avoid; }
+
+      .sm, .net-box, .bar > span, .sec-title .dot {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+    }
+
+    /* ─── Layar kecil ─── */
+    @media (max-width: 820px) {
+      body { padding: 14px 10px 40px; }
+      .sheet { width: 100%; min-height: 0; padding: 18px 14px; }
+      .head { flex-direction: column; gap: 14px; }
+      .doc { text-align: left; }
+      .summary { grid-template-columns: 1fr; }
+      .net-box { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .sign-row { justify-content: stretch; }
+      .sign { width: 100%; }
+      .foot { flex-direction: column; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+
+<%
+  const rp   = (n) => 'Rp ' + Math.abs(Number(n) || 0).toLocaleString('id-ID');
+  const income  = Number(cashInYear) || 0;
+  const expense = Number(expensesYear) || 0;
+  const net     = Number(netProfitYear) || 0;
+  const isLoss  = net < 0;
+
+  const incomeRows  = (typeof incomeByCategory !== 'undefined' && incomeByCategory) ? incomeByCategory : [];
+  const expenseRows = expensesByCategory || [];
+
+  const pctOf = (v, total) => (Number(total) > 0 ? (Number(v) / Number(total)) * 100 : 0);
+
+  const logoOk = true;
+  const sigOk  = true;
+
+  function terbilang(n) {
+    n = Math.floor(Math.abs(Number(n) || 0));
+    const sat = ['','satu','dua','tiga','empat','lima','enam','tujuh','delapan','sembilan','sepuluh','sebelas'];
+    function conv(x) {
+      if (x < 12) return sat[x];
+      if (x < 20) return conv(x - 10) + ' belas';
+      if (x < 100) return conv(Math.floor(x / 10)) + ' puluh' + (x % 10 ? ' ' + conv(x % 10) : '');
+      if (x < 200) return 'seratus' + (x - 100 ? ' ' + conv(x - 100) : '');
+      if (x < 1000) return conv(Math.floor(x / 100)) + ' ratus' + (x % 100 ? ' ' + conv(x % 100) : '');
+      if (x < 2000) return 'seribu' + (x - 1000 ? ' ' + conv(x - 1000) : '');
+      if (x < 1000000) return conv(Math.floor(x / 1000)) + ' ribu' + (x % 1000 ? ' ' + conv(x % 1000) : '');
+      if (x < 1000000000) return conv(Math.floor(x / 1000000)) + ' juta' + (x % 1000000 ? ' ' + conv(x % 1000000) : '');
+      return conv(Math.floor(x / 1000000000)) + ' miliar' + (x % 1000000000 ? ' ' + conv(x % 1000000000) : '');
+    }
+    if (n === 0) return 'Nol';
+    const s = conv(n).replace(/\s+/g, ' ').trim();
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  const s        = (typeof settings !== 'undefined' && settings) ? settings : {};
+  const phone    = (s.whatsapp_admin_numbers && s.whatsapp_admin_numbers.length > 0)
+                     ? '+' + s.whatsapp_admin_numbers[0] : (s.company_phone || '');
+  const printedAt = formatDateLocal(new Date().toISOString());
+%>
+
+<div class="toolbar">
+  <button class="tb-btn primary" onclick="window.print()">🖨 Cetak / Simpan PDF</button>
+  <a class="tb-btn" href="/admin/reports?year=<%= filterYear %>">Kembali</a>
+</div>
+
+<div class="sheet">
+
+  <!-- HEADER -->
+  <div class="head">
+    <div class="brand">
+      <img src="/img/logo.png" alt="" class="brand-logo"
+           onerror="this.outerHTML='<div class=\'brand-fallback\'><%= String(company).charAt(0).toUpperCase() %></div>'">
+      <div>
+        <div class="brand-name"><%= company %></div>
+        <div class="brand-meta">
+          <% if (s.company_address) { %><%= s.company_address %><br><% } %>
+          <% if (phone) { %>Telp/WA: <%= phone %><% } %>
+          <% if (s.company_email) { %> &nbsp;·&nbsp; <%= s.company_email %><% } %>
+        </div>
+      </div>
+    </div>
+    <div class="doc">
+      <div class="doc-label">Laporan Laba Rugi</div>
+      <div class="doc-period">Periode Tahun <%= filterYear %></div>
+      <div class="doc-gen">Dicetak <%= printedAt %></div>
+    </div>
+  </div>
+  <div class="rule"></div>
+
+  <!-- RINGKASAN -->
+  <div class="summary">
+    <div class="sm in">
+      <div class="sm-label">Total Pemasukan</div>
+      <div class="sm-val"><%= rp(income) %></div>
+    </div>
+    <div class="sm out">
+      <div class="sm-label">Total Pengeluaran</div>
+      <div class="sm-val"><%= expense > 0 ? '−' + rp(expense) : rp(0) %></div>
+    </div>
+    <div class="sm net <%= isLoss ? 'loss' : '' %>">
+      <div class="sm-label"><%= isLoss ? 'Rugi Bersih' : 'Laba Bersih' %></div>
+      <div class="sm-val"><%= (isLoss ? '−' : '') + rp(net) %></div>
+    </div>
+  </div>
+
+  <!-- PEMASUKAN -->
+  <div class="sec">
+    <div class="sec-title"><span class="dot dot-in"></span> Rincian Pemasukan</div>
+    <table class="rep">
+      <thead>
+        <tr>
+          <th class="ctr" style="width:38px">No</th>
+          <th>Sumber Pemasukan</th>
+          <th class="num" style="width:76px">Porsi</th>
+          <th class="num" style="width:120px">Jumlah (Rp)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (incomeRows.length === 0) { %>
+          <tr><td colspan="4" class="empty">Tidak ada pemasukan tercatat pada tahun ini.</td></tr>
+        <% } %>
+        <% incomeRows.forEach((r, i) => { const p = pctOf(r.total, income); %>
+          <tr>
+            <td class="ctr"><%= i + 1 %></td>
+            <td>
+              <div class="cat-name"><%= r.category %></div>
+              <div class="bar in"><span style="width:<%= p.toFixed(1) %>%"></span></div>
+            </td>
+            <td class="num pct"><%= p.toFixed(1) %>%</td>
+            <td class="num"><%= Number(r.total).toLocaleString('id-ID') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3" style="text-align:right">Total Pemasukan</td>
+          <td class="num" style="color:var(--income)"><%= rp(income) %></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- PENGELUARAN -->
+  <div class="sec">
+    <div class="sec-title"><span class="dot dot-out"></span> Rincian Pengeluaran per Kategori</div>
+    <table class="rep">
+      <thead>
+        <tr>
+          <th class="ctr" style="width:38px">No</th>
+          <th>Kategori / Pos Pengeluaran</th>
+          <th class="num" style="width:76px">Porsi</th>
+          <th class="num" style="width:120px">Jumlah (Rp)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (expenseRows.length === 0) { %>
+          <tr><td colspan="4" class="empty">Tidak ada pengeluaran tercatat pada tahun ini.</td></tr>
+        <% } %>
+        <% let totalExp = 0; expenseRows.forEach((c, i) => { totalExp += Number(c.total) || 0;
+             const p = pctOf(c.total, expense); %>
+          <tr>
+            <td class="ctr"><%= i + 1 %></td>
+            <td>
+              <div class="cat-name"><%= c.category %></div>
+              <div class="bar out"><span style="width:<%= p.toFixed(1) %>%"></span></div>
+            </td>
+            <td class="num pct"><%= p.toFixed(1) %>%</td>
+            <td class="num"><%= Number(c.total).toLocaleString('id-ID') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3" style="text-align:right">Total Pengeluaran</td>
+          <td class="num" style="color:var(--expense)"><%= rp(totalExp) %></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- LABA BERSIH -->
+  <div class="net-box <%= isLoss ? 'loss' : '' %>">
+    <div>
+      <div class="net-label"><%= isLoss ? 'Rugi Bersih Tahun ' + filterYear : 'Laba Bersih Tahun ' + filterYear %></div>
+      <div class="net-sub">Total pemasukan dikurangi total pengeluaran</div>
+      <div class="terbilang">Terbilang: <em><%= terbilang(net) %> rupiah</em></div>
+    </div>
+    <div class="net-val"><%= (isLoss ? '−' : '') + rp(net) %></div>
+  </div>
+
+  <!-- TANDA TANGAN -->
+  <div class="sign-row">
+    <div class="sign">
+      <div class="sign-cap">Mengetahui</div>
+      <div class="sign-place"><%= printedAt %></div>
+      <div class="sign-area">
+        <img src="/img/signature.png" alt="" class="sign-img"
+             onerror="this.outerHTML='<div class=\'sign-ph\'>Area Tanda Tangan<br>600 &times; 240 px</div>'">
+      </div>
+      <div class="sign-name"><%= s.company_manager || company %></div>
+      <div class="sign-role">Bagian Keuangan</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <div>
+      <%= s.footer_info || company %>
+      <% if (s.operational_hours) { %> · <%= s.operational_hours %><% } %>
+    </div>
+    <div>Laporan Laba Rugi <%= filterYear %> · Dicetak <%= printedAt %></div>
+  </div>
+
+</div>
+
+<script>
+  // Cetak otomatis, kecuali dibuka dengan ?preview=1 untuk ditinjau dulu
+  if (new URLSearchParams(location.search).get('preview') !== '1') {
+    window.addEventListener('load', () => setTimeout(() => window.print(), 350));
+  }
+</script>
+</body>
+</html>

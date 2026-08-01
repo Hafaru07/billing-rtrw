@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="<%= lang || 'id' %>">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title><%= title %> | <%= company %></title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/css/admin.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.Editable/1.2.0/Leaflet.Editable.js"></script>
+  <style>
+    #map { height: calc(100vh - 200px); border-radius: 8px; margin-top: 10px; z-index: 1; background: #e5e7eb; }
+    .map-controls { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    .legend { background: rgba(255, 255, 255, 0.98); padding: 12px 15px; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); font-size: 13px; line-height: 2.2; font-weight: 700; color: #1e293b; border: 2px solid #cbd5e1; backdrop-filter: blur(5px); }
+    .legend i { width: 16px; height: 16px; display: inline-block; margin-right: 12px; border-radius: 50%; vertical-align: middle; border: 3px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.3); }
+    
+    /* Stats Cards on Map */
+    .map-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px; }
+    .msc { padding: 12px; border-radius: 12px; background: white; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .msc-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .msc-p { background: #eff6ff; color: #3b82f6; }
+    .msc-s { background: #f0fdf4; color: #10b981; }
+    .msc-d { background: #fef2f2; color: #ef4444; }
+    .msc-w { background: #fff7ed; color: #f59e0b; }
+    .msc-v { background: #f5f3ff; color: #8b5cf6; }
+    .msc-info .val { font-size: 18px; font-weight: 700; line-height: 1.2; color: #1e293b; }
+    .msc-info .lbl { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+
+    /* Legend Cards */
+    .legend-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px; }
+    .lc { background: white; border: 1px solid #e2e8f0; padding: 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.03); }
+    .lc i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
+    .lc span { font-size: 12px; font-weight: 700; color: #334155; }
+    
+    .odps-panel { background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 12px; overflow: hidden; }
+    .odps-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 12px; border-bottom: 1px solid #e2e8f0; }
+    .odps-title { font-weight: 900; font-size: 13px; color: #0f172a; display: inline-flex; align-items: center; gap: 8px; }
+    .odps-search { width: 240px; max-width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: 700; font-size: 12px; outline: none; }
+    .odps-search:focus { border-color: rgba(59,130,246,0.85); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+    .odps-table-wrap { max-height: 240px; overflow: auto; }
+    .odps-table { width: 100%; border-collapse: collapse; }
+    .odps-table th, .odps-table td { padding: 10px 12px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
+    .odps-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; color: #64748b; font-weight: 900; position: sticky; top: 0; background: white; z-index: 1; }
+    .odps-name { font-weight: 900; font-size: 13px; color: #0f172a; line-height: 1.2; }
+    .odps-desc { margin-top: 4px; font-size: 12px; color: #64748b; font-weight: 600; line-height: 1.25; }
+    .odps-coord { font-size: 12px; color: #334155; font-weight: 800; white-space: nowrap; }
+    .odps-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .btn-ghost { background: #f8fafc; border: 1px solid #cbd5e1; color: #0f172a; }
+    .btn-ghost:hover { background: #f1f5f9; border-color: #94a3b8; }
+    @media (max-width: 768px) {
+      .odps-head { flex-wrap: wrap; }
+      .odps-search { width: 100%; }
+      .odps-hide-sm { display: none; }
+    }
+
+    /* Editable Handles Visibility */
+    .leaflet-vertex-icon {
+      background: #ff0000 !important;
+      border: 2px solid #ffffff !important;
+      border-radius: 50% !important;
+      box-shadow: 0 0 10px rgba(255,0,0,1) !important;
+      width: 18px !important;
+      height: 18px !important;
+      margin-left: -9px !important;
+      margin-top: -9px !important;
+      z-index: 9999 !important;
+      display: block !important;
+      cursor: move !important;
+    }
+    .leaflet-middle-marker {
+      background: #00ff00 !important;
+      border: 2px solid #ffffff !important;
+      border-radius: 50% !important;
+      box-shadow: 0 0 8px rgba(0,255,0,1) !important;
+      width: 14px !important;
+      height: 14px !important;
+      margin-left: -7px !important;
+      margin-top: -7px !important;
+      z-index: 9998 !important;
+      display: block !important;
+      cursor: crosshair !important;
+      opacity: 0.9 !important;
+    }
+
+    /* Picker Map in Modal */
+    #picker-map { height: 250px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #cbd5e1; z-index: 1; }
+    #edit-picker-map { height: 250px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #cbd5e1; z-index: 1; }
+    #server-picker-map, #server-edit-picker-map, #pole-picker-map, #pole-edit-picker-map { height: 250px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #cbd5e1; z-index: 1; }
+    #cable-drawing-map { height: 450px; border-radius: 8px; border: 1px solid #cbd5e1; z-index: 1; background: #e5e7eb; }
+    .picker-icon-odp { color: #f59e0b; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); display: block; width: 24px; height: 24px; text-align: center; line-height: 24px; text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .picker-icon-server { color: #8b5cf6; font-size: 26px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); display: block; width: 26px; height: 26px; text-align: center; line-height: 26px; text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .picker-icon-pole { color: #10b981; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); display: block; width: 24px; height: 24px; text-align: center; line-height: 24px; text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+
+    .marker-odp { color: #f59e0b; font-size: 18px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .marker-server { color: #8b5cf6; font-size: 22px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .marker-server-off { color: #94a3b8; font-size: 22px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .marker-pole { color: #10b981; font-size: 16px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+
+    /* Tab panel daftar node */
+    .node-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; }
+    .node-tab { border: 1px solid transparent; border-bottom: none; background: transparent; padding: 8px 14px; border-radius: 10px 10px 0 0; font-weight: 800; font-size: 12px; color: #64748b; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+    .node-tab:hover { background: #f1f5f9; color: #0f172a; }
+    .node-tab.on { background: #fff; border-color: #e2e8f0; color: #0f172a; margin-bottom: -1px; }
+    .node-tab .cnt { background: #e2e8f0; color: #0f172a; border-radius: 999px; padding: 1px 7px; font-size: 10px; font-weight: 900; }
+    .node-pane { display: none; }
+    .node-pane.on { display: block; }
+    .odps-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 900; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; margin-top: 4px; }
+    .odps-badge.up { background: rgba(139,92,246,0.12); border-color: rgba(139,92,246,0.25); color: #5b21b6; }
+    .odps-badge.pole { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); color: #065f46; }
+    .odps-badge.none { background: rgba(148,163,184,0.14); border-color: rgba(148,163,184,0.3); color: #475569; }
+    .marker-cust-active { color: #3b82f6; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .marker-cust-suspended { color: #ef4444; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); text-shadow: -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff; }
+    .popup-content { font-size: 13px; }
+    .popup-content h6 { margin: 0 0 5px 0; font-size: 14px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    .popup-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .cust-popup { width: 300px; max-width: 300px; box-sizing: border-box; }
+    .cp-head { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; border-bottom: 1px solid rgba(148, 163, 184, 0.35); }
+    .cp-avatar { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: linear-gradient(135deg, rgba(59,130,246,0.18), rgba(6,182,212,0.18)); color: #0f172a; border: 1px solid rgba(148, 163, 184, 0.35); }
+    .cp-title { min-width: 0; flex: 1; }
+    .cp-name { font-weight: 900; font-size: 14px; color: #0f172a; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cp-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .cp-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; font-weight: 800; font-size: 11px; line-height: 1; border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(255,255,255,0.9); color: #0f172a; }
+    .cp-chip i { font-size: 12px; opacity: 0.9; }
+    .cp-chip-active { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); color: #065f46; }
+    .cp-chip-suspended { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.25); color: #7f1d1d; }
+    .cp-meta { display: grid; grid-template-columns: 1fr; gap: 6px; padding-top: 10px; }
+    .cp-meta-item { display: flex; gap: 8px; align-items: flex-start; color: #334155; }
+    .cp-meta-item i { margin-top: 2px; color: #64748b; }
+    .cp-meta-item span { overflow: hidden; text-overflow: ellipsis; }
+    .cp-traffic { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, 0.35); }
+    .cp-traffic-head { display: flex; align-items: center; gap: 8px; font-weight: 900; font-size: 12px; color: #0f172a; margin-bottom: 8px; }
+    .cp-traffic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .cp-chart { position: relative; border-radius: 14px; padding: 10px; border: 1px solid rgba(148, 163, 184, 0.35); background: linear-gradient(180deg, rgba(248,250,252,0.95), rgba(255,255,255,0.95)); overflow: hidden; box-sizing: border-box; min-width: 0; }
+    .cp-chart-label { display: flex; align-items: center; gap: 8px; font-weight: 900; font-size: 11px; color: #0f172a; margin-bottom: 6px; }
+    .cp-chart-label i { font-size: 13px; }
+    .cp-spark { width: 100%; height: 70px; display: block; }
+    .cp-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; color: #64748b; background: rgba(255,255,255,0.72); backdrop-filter: blur(2px); opacity: 0; pointer-events: none; }
+    .cp-overlay.on { opacity: 1; }
+    .btn-wa { background: #25D366; border: 1px solid #25D366; color: #0b1220 !important; font-weight: 800; }
+    .btn-wa:hover { background: #1fb85a; border-color: #1fb85a; color: #0b1220 !important; }
+
+    /* Flowing line animation */
+    @keyframes flow {
+      from { stroke-dashoffset: 20; }
+      to { stroke-dashoffset: 0; }
+    }
+    .flowing-line {
+      animation: flow 1s linear infinite;
+    }
+  </style>
+  <link rel="stylesheet" href="/css/responsive.css">
+</head>
+<body>
+<%- include('partials/sidebar', { activePage: 'map', company }) %>
+
+<div class="mw">
+  <div class="topbar">
+    <div class="tb-title">
+      <button class="hb-menu" onclick="toggleSidebar()"><i class="bi bi-list"></i></button>
+      <i class="bi bi-map"></i>
+      <span><%= title %></span>
+    </div>
+    <div class="tb-right" style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button class="btn btn-g btn-sm" onclick="openModal('addServerModal')"><i class="bi bi-hdd-network-fill"></i> <%= t('admin.map.add_server', 'Tambah Server') %></button>
+      <button class="btn btn-g btn-sm" onclick="openModal('addPoleModal')"><i class="bi bi-broadcast-pin"></i> <%= t('admin.map.add_pole', 'Tambah Tiang') %></button>
+      <button class="btn btn-p btn-sm" onclick="openModal('addOdpModal')"><i class="bi bi-plus-circle"></i> <%= t('admin.map.add_odp', 'Tambah ODP') %></button>
+    </div>
+  </div>
+
+  <div class="page">
+    <% if (msg) { %>
+      <div class="alert alert-<%= msg.type==='error'?'d':'s' %>"><%= msg.text %></div>
+    <% } %>
+
+    <div class="map-stats">
+        <div class="msc">
+            <div class="msc-icon msc-v"><i class="bi bi-hdd-network-fill"></i></div>
+            <div class="msc-info">
+                <div class="val"><%= (locals.servers || []).length %></div>
+                <div class="lbl"><%= t('admin.map.stats.total_server', 'Total Server') %></div>
+            </div>
+        </div>
+        <div class="msc">
+            <div class="msc-icon msc-s"><i class="bi bi-broadcast-pin"></i></div>
+            <div class="msc-info">
+                <div class="val"><%= (locals.poles || []).length %></div>
+                <div class="lbl"><%= t('admin.map.stats.total_pole', 'Total Tiang') %></div>
+            </div>
+        </div>
+        <div class="msc">
+            <div class="msc-icon msc-w"><i class="bi bi-box-seam-fill"></i></div>
+            <div class="msc-info">
+                <div class="val"><%= odps.length %></div>
+                <div class="lbl"><%= t('admin.map.stats.total_odp', 'Total ODP') %></div>
+            </div>
+        </div>
+        <div class="msc">
+            <div class="msc-icon msc-s"><i class="bi bi-person-check-fill"></i></div>
+            <div class="msc-info">
+                <div class="val"><%= customers.filter(c => c.status === 'active').length %></div>
+                <div class="lbl"><%= t('admin.map.stats.active_customers', 'Pelanggan Aktif') %></div>
+            </div>
+        </div>
+        <div class="msc">
+            <div class="msc-icon msc-d"><i class="bi bi-person-x-fill"></i></div>
+            <div class="msc-info">
+                <div class="val"><%= customers.filter(c => c.status !== 'active').length %></div>
+                <div class="lbl"><%= t('admin.map.stats.suspended_customers', 'Isolir / Nonaktif') %></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="legend-grid">
+        <div class="lc">
+            <i style="background: #8b5cf6;"></i>
+            <span><%= t('admin.map.legend.server', 'Server / POP') %></span>
+        </div>
+        <div class="lc">
+            <i style="background: #10b981;"></i>
+            <span><%= t('admin.map.legend.pole', 'Tiang') %></span>
+        </div>
+        <div class="lc">
+            <i style="background: #f59e0b;"></i>
+            <span><%= t('admin.map.legend.odp', 'ODP (Box)') %></span>
+        </div>
+        <div class="lc">
+            <i style="background: #3b82f6;"></i>
+            <span><%= t('admin.map.legend.active', 'Aktif') %></span>
+        </div>
+        <div class="lc">
+            <i style="background: #ef4444;"></i>
+            <span><%= t('admin.map.legend.suspended', 'Isolir') %></span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+    
+    <div class="odps-panel" style="margin-top: 12px;">
+      <div class="node-tabs">
+        <button type="button" class="node-tab on" data-pane="paneServers" onclick="switchNodeTab(this)">
+          <i class="bi bi-hdd-network-fill" style="color:#8b5cf6"></i> <%= t('admin.map.server_list.title', 'Server') %>
+          <span class="cnt"><%= (locals.servers || []).length %></span>
+        </button>
+        <button type="button" class="node-tab" data-pane="panePoles" onclick="switchNodeTab(this)">
+          <i class="bi bi-broadcast-pin" style="color:#10b981"></i> <%= t('admin.map.pole_list.title', 'Tiang') %>
+          <span class="cnt"><%= (locals.poles || []).length %></span>
+        </button>
+        <button type="button" class="node-tab" data-pane="paneOdps" onclick="switchNodeTab(this)">
+          <i class="bi bi-box-seam-fill" style="color:#f59e0b"></i> <%= t('admin.map.odp_list.title', 'Daftar ODP') %>
+          <span class="cnt"><%= odps.length %></span>
+        </button>
+      </div>
+
+      <!-- PANE: SERVER -->
+      <div class="node-pane on" id="paneServers">
+        <div class="odps-head">
+          <div class="odps-title"><i class="bi bi-hdd-network-fill"></i> <span><%= t('admin.map.server_list.title', 'Server') %></span></div>
+          <input data-search-for="serversTbody" class="odps-search" type="text" placeholder="<%= t('admin.map.server_list.search', 'Cari server...') %>">
+        </div>
+        <div class="odps-table-wrap">
+          <table class="odps-table">
+            <thead>
+              <tr>
+                <th><%= t('admin.map.odp_list.name', 'Nama') %></th>
+                <th class="odps-hide-sm"><%= t('admin.map.odp_list.coord', 'Koordinat') %></th>
+                <th style="width: 96px; text-align: right;"><%= t('admin.map.odp_list.action', 'Aksi') %></th>
+              </tr>
+            </thead>
+            <tbody id="serversTbody">
+              <% const _srv = locals.servers || []; if (_srv.length > 0) { %>
+                <% _srv.forEach(s => { %>
+                  <tr data-name="<%= String((s.name || '') + ' ' + (s.type || '')).toLowerCase() %>">
+                    <td>
+                      <div class="odps-name"><%= s.name %></div>
+                      <div class="odps-badge up"><i class="bi bi-diagram-3"></i><%= String(s.type || 'pop').toUpperCase() %></div>
+                      <% if (Number(s.is_active) !== 1) { %><div class="odps-badge none"><i class="bi bi-pause-circle"></i>Nonaktif</div><% } %>
+                      <% if (s.description) { %><div class="odps-desc"><%= s.description %></div><% } %>
+                    </td>
+                    <td class="odps-hide-sm">
+                      <div class="odps-coord"><%= (Number(s.lat) || 0).toFixed(6) %>, <%= (Number(s.lng) || 0).toFixed(6) %></div>
+                    </td>
+                    <td>
+                      <div class="odps-actions">
+                        <button type="button" class="btn btn-sm btn-p" data-node-id="<%= Number(s.id) %>" onclick="editServerById(this.dataset.nodeId)" title="<%= t('common.edit', 'Edit') %>"><i class="bi bi-pencil"></i></button>
+                        <button type="button" class="btn btn-sm btn-d" data-node-id="<%= Number(s.id) %>" onclick="deleteNode('servers', this.dataset.nodeId, 'server')" title="Hapus"><i class="bi bi-trash"></i></button>
+                        <button type="button" class="btn btn-sm btn-ghost" data-node-id="<%= Number(s.id) %>" onclick="focusNode('server', this.dataset.nodeId)" title="<%= t('admin.map.odp_list.focus', 'Fokus') %>"><i class="bi bi-geo-alt"></i></button>
+                      </div>
+                    </td>
+                  </tr>
+                <% }) %>
+              <% } else { %>
+                <tr><td colspan="3" style="padding: 14px 12px; color:#64748b; font-weight: 800;"><%= t('admin.map.server_list.empty', 'Belum ada server. Klik Tambah Server untuk menambahkan.') %></td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PANE: TIANG -->
+      <div class="node-pane" id="panePoles">
+        <div class="odps-head">
+          <div class="odps-title"><i class="bi bi-broadcast-pin"></i> <span><%= t('admin.map.pole_list.title', 'Tiang') %></span></div>
+          <input data-search-for="polesTbody" class="odps-search" type="text" placeholder="<%= t('admin.map.pole_list.search', 'Cari tiang...') %>">
+        </div>
+        <div class="odps-table-wrap">
+          <table class="odps-table">
+            <thead>
+              <tr>
+                <th><%= t('admin.map.odp_list.name', 'Nama') %></th>
+                <th class="odps-hide-sm"><%= t('admin.map.odp_list.coord', 'Koordinat') %></th>
+                <th style="width: 96px; text-align: right;"><%= t('admin.map.odp_list.action', 'Aksi') %></th>
+              </tr>
+            </thead>
+            <tbody id="polesTbody">
+              <% const _pol = locals.poles || []; if (_pol.length > 0) { %>
+                <% _pol.forEach(p => { %>
+                  <tr data-name="<%= String((p.name || '') + ' ' + (p.parent_name || '')).toLowerCase() %>">
+                    <td>
+                      <div class="odps-name"><%= p.name %></div>
+                      <% if (p.parent_name) { %>
+                        <div class="odps-badge <%= p.parent_type === 'server' ? 'up' : 'pole' %>"><i class="bi bi-arrow-up-right"></i><%= p.parent_name %></div>
+                      <% } else { %>
+                        <div class="odps-badge none"><i class="bi bi-dash-circle"></i><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></div>
+                      <% } %>
+                      <% if (p.description) { %><div class="odps-desc"><%= p.description %></div><% } %>
+                    </td>
+                    <td class="odps-hide-sm">
+                      <div class="odps-coord"><%= (Number(p.lat) || 0).toFixed(6) %>, <%= (Number(p.lng) || 0).toFixed(6) %></div>
+                    </td>
+                    <td>
+                      <div class="odps-actions">
+                        <button type="button" class="btn btn-sm btn-p" data-node-id="<%= Number(p.id) %>" onclick="editPoleById(this.dataset.nodeId)" title="<%= t('common.edit', 'Edit') %>"><i class="bi bi-pencil"></i></button>
+                        <button type="button" class="btn btn-sm btn-d" data-node-id="<%= Number(p.id) %>" onclick="deleteNode('poles', this.dataset.nodeId, 'tiang')" title="Hapus"><i class="bi bi-trash"></i></button>
+                        <button type="button" class="btn btn-sm btn-ghost" data-node-id="<%= Number(p.id) %>" onclick="focusNode('pole', this.dataset.nodeId)" title="<%= t('admin.map.odp_list.focus', 'Fokus') %>"><i class="bi bi-geo-alt"></i></button>
+                      </div>
+                    </td>
+                  </tr>
+                <% }) %>
+              <% } else { %>
+                <tr><td colspan="3" style="padding: 14px 12px; color:#64748b; font-weight: 800;"><%= t('admin.map.pole_list.empty', 'Belum ada tiang. Klik Tambah Tiang untuk menambahkan.') %></td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PANE: ODP -->
+      <div class="node-pane" id="paneOdps">
+        <div class="odps-head">
+          <div class="odps-title"><i class="bi bi-box-seam-fill"></i> <span><%= t('admin.map.odp_list.title', 'Daftar ODP') %></span></div>
+          <input id="odpSearch" data-search-for="odpsTbody" class="odps-search" type="text" placeholder="<%= t('admin.map.odp_list.search', 'Cari ODP...') %>">
+        </div>
+        <div class="odps-table-wrap">
+          <table class="odps-table">
+            <thead>
+              <tr>
+                <th><%= t('admin.map.odp_list.name', 'Nama') %></th>
+                <th class="odps-hide-sm"><%= t('admin.map.odp_list.coord', 'Koordinat') %></th>
+                <th style="width: 96px; text-align: right;"><%= t('admin.map.odp_list.action', 'Aksi') %></th>
+              </tr>
+            </thead>
+            <tbody id="odpsTbody">
+              <% if (odps && odps.length > 0) { %>
+                <% odps.forEach(o => { %>
+                  <tr data-name="<%= String((o.name || '') + ' ' + (o.pole_name || '') + ' ' + (o.server_name || '')).toLowerCase() %>">
+                    <td>
+                      <div class="odps-name"><%= o.name %></div>
+                      <% if (o.pole_name) { %>
+                        <div class="odps-badge pole"><i class="bi bi-arrow-up-right"></i><%= o.pole_name %></div>
+                      <% } else if (o.server_name) { %>
+                        <div class="odps-badge up"><i class="bi bi-arrow-up-right"></i><%= o.server_name %></div>
+                      <% } else { %>
+                        <div class="odps-badge none"><i class="bi bi-dash-circle"></i><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></div>
+                      <% } %>
+                      <% if (o.description) { %>
+                        <div class="odps-desc"><%= o.description %></div>
+                      <% } %>
+                    </td>
+                    <td class="odps-hide-sm">
+                      <div class="odps-coord"><%= (Number(o.lat) || 0).toFixed(6) %>, <%= (Number(o.lng) || 0).toFixed(6) %></div>
+                    </td>
+                    <td>
+                      <div class="odps-actions">
+                        <button type="button" class="btn btn-sm btn-p" data-odp-id="<%= Number(o.id) %>" onclick="editOdpFromBtn(this)" title="<%= t('common.edit', 'Edit') %>"><i class="bi bi-pencil"></i></button>
+                        <button type="button" class="btn btn-sm btn-d" data-odp-id="<%= Number(o.id) %>" onclick="deleteOdpFromBtn(this)" title="Hapus"><i class="bi bi-trash"></i></button>
+                        <button type="button" class="btn btn-sm btn-ghost" data-odp-id="<%= Number(o.id) %>" onclick="focusOdpFromBtn(this)" title="<%= t('admin.map.odp_list.focus', 'Fokus') %>"><i class="bi bi-geo-alt"></i></button>
+                      </div>
+                    </td>
+                  </tr>
+                <% }) %>
+              <% } else { %>
+                <tr><td colspan="3" style="padding: 14px 12px; color:#64748b; font-weight: 800;"><%= t('admin.map.odp_list.empty', 'Belum ada ODP. Klik Tambah ODP untuk menambahkan.') %></td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Tambah ODP -->
+<div class="mo" id="addOdpModal">
+  <div class="mb">
+    <form action="/admin/odps" method="POST">
+      <div class="mh"><span class="mt"><%= t('admin.map.add_modal.title', 'Tambah ODP Baru') %></span><button type="button" class="mc" onclick="closeModal('addOdpModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.name', 'Nama ODP') %></label><input type="text" name="name" class="fc" placeholder="<%= t('admin.map.form.name_placeholder', 'Contoh: ODP-A-01') %>" required></div>
+        
+        <label class="fl"><%= t('admin.map.form.pick_location', 'Pilih Lokasi di Peta') %></label>
+        <div id="picker-map"></div>
+
+        <div class="form-row">
+            <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="new_lat" class="fc" placeholder="-6.xxx" required></div>
+            <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="new_lng" class="fc" placeholder="106.xxx" required></div>
+        </div>
+        <p class="text-muted" style="font-size: 11px;"><%= t('admin.map.form.tips', '*Tips: Geser marker atau klik pada peta untuk menentukan posisi presisi') %></p>
+
+        <div class="fg">
+          <label class="fl"><%= t('admin.map.form.uplink', 'Sambung ke (Uplink)') %></label>
+          <select name="uplink" class="fc" onchange="syncOdpUplink(this, 'new_odp_server_id', 'new_odp_pole_id')">
+            <option value=""><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></option>
+            <% (locals.poles || []).forEach(p => { %>
+              <option value="pole:<%= p.id %>">🟢 <%= t('admin.map.form.pole_prefix', 'Tiang') %>: <%= p.name %></option>
+            <% }) %>
+            <% (locals.servers || []).forEach(s => { %>
+              <option value="server:<%= s.id %>">🟣 <%= t('admin.map.form.server_prefix', 'Server') %>: <%= s.name %></option>
+            <% }) %>
+          </select>
+          <input type="hidden" name="server_id" id="new_odp_server_id">
+          <input type="hidden" name="pole_id" id="new_odp_pole_id">
+        </div>
+
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('addOdpModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.add_modal.save', 'Simpan ODP') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Edit ODP -->
+<div class="mo" id="editOdpModal">
+  <div class="mb">
+    <form id="editOdpForm" method="POST">
+      <div class="mh"><span class="mt"><%= t('admin.map.edit_modal.title', 'Edit Data ODP') %></span><button type="button" class="mc" onclick="closeModal('editOdpModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.name', 'Nama ODP') %></label><input type="text" name="name" id="e_odp_name" class="fc" required></div>
+        
+        <label class="fl"><%= t('admin.map.form.adjust_location', 'Sesuaikan Lokasi di Peta') %></label>
+        <div id="edit-picker-map"></div>
+
+        <div class="form-row">
+            <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="e_odp_lat" class="fc" required></div>
+            <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="e_odp_lng" class="fc" required></div>
+        </div>
+        <div class="fg">
+          <label class="fl"><%= t('admin.map.form.uplink', 'Sambung ke (Uplink)') %></label>
+          <select id="e_odp_uplink" name="uplink" class="fc" onchange="syncOdpUplink(this, 'e_odp_server_id', 'e_odp_pole_id')">
+            <option value=""><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></option>
+            <% (locals.poles || []).forEach(p => { %>
+              <option value="pole:<%= p.id %>">🟢 <%= t('admin.map.form.pole_prefix', 'Tiang') %>: <%= p.name %></option>
+            <% }) %>
+            <% (locals.servers || []).forEach(s => { %>
+              <option value="server:<%= s.id %>">🟣 <%= t('admin.map.form.server_prefix', 'Server') %>: <%= s.name %></option>
+            <% }) %>
+          </select>
+          <input type="hidden" name="server_id" id="e_odp_server_id">
+          <input type="hidden" name="pole_id" id="e_odp_pole_id">
+          <p class="text-muted" style="font-size: 11px; margin-top:4px;"><%= t('admin.map.form.uplink_warn', '*Mengubah uplink akan menghapus jalur kabel yang sudah digambar.') %></p>
+        </div>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" id="e_odp_description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('editOdpModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.edit_modal.update', 'Update ODP') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Tambah Server -->
+<div class="mo" id="addServerModal">
+  <div class="mb">
+    <form action="/admin/servers" method="POST">
+      <div class="mh"><span class="mt"><i class="bi bi-hdd-network-fill"></i> <%= t('admin.map.server_modal.add_title', 'Tambah Server / POP') %></span><button type="button" class="mc" onclick="closeModal('addServerModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.server_name', 'Nama Server') %></label><input type="text" name="name" class="fc" placeholder="<%= t('admin.map.form.server_name_placeholder', 'Contoh: POP-Pusat') %>" required></div>
+        <div class="form-row">
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.server_type', 'Tipe') %></label>
+            <select name="type" class="fc">
+              <option value="pop">POP / Kantor</option>
+              <option value="olt">OLT</option>
+              <option value="router">Router</option>
+              <option value="backbone">Backbone</option>
+              <option value="bts">BTS / Tower</option>
+            </select>
+          </div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.capacity', 'Kapasitas Port/Core') %></label><input type="number" name="capacity" class="fc" min="0" value="0" placeholder="0 = tak dibatasi"></div>
+        </div>
+
+        <label class="fl"><%= t('admin.map.form.pick_location', 'Pilih Lokasi di Peta') %></label>
+        <div id="server-picker-map"></div>
+
+        <div class="form-row">
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="new_server_lat" class="fc" placeholder="-6.xxx" required></div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="new_server_lng" class="fc" placeholder="106.xxx" required></div>
+        </div>
+        <p class="text-muted" style="font-size: 11px;"><%= t('admin.map.form.tips', '*Tips: Geser marker atau klik pada peta untuk menentukan posisi presisi') %></p>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.address', 'Alamat') %></label><input type="text" name="address" class="fc"></div>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('addServerModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.server_modal.save', 'Simpan Server') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Edit Server -->
+<div class="mo" id="editServerModal">
+  <div class="mb">
+    <form id="editServerForm" method="POST">
+      <div class="mh"><span class="mt"><i class="bi bi-hdd-network-fill"></i> <%= t('admin.map.server_modal.edit_title', 'Edit Server / POP') %></span><button type="button" class="mc" onclick="closeModal('editServerModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.server_name', 'Nama Server') %></label><input type="text" name="name" id="e_server_name" class="fc" required></div>
+        <div class="form-row">
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.server_type', 'Tipe') %></label>
+            <select name="type" id="e_server_type" class="fc">
+              <option value="pop">POP / Kantor</option>
+              <option value="olt">OLT</option>
+              <option value="router">Router</option>
+              <option value="backbone">Backbone</option>
+              <option value="bts">BTS / Tower</option>
+            </select>
+          </div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.capacity', 'Kapasitas Port/Core') %></label><input type="number" name="capacity" id="e_server_capacity" class="fc" min="0"></div>
+        </div>
+
+        <label class="fl"><%= t('admin.map.form.adjust_location', 'Sesuaikan Lokasi di Peta') %></label>
+        <div id="server-edit-picker-map"></div>
+
+        <div class="form-row">
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="e_server_lat" class="fc" required></div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="e_server_lng" class="fc" required></div>
+        </div>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.address', 'Alamat') %></label><input type="text" name="address" id="e_server_address" class="fc"></div>
+        <div class="fg">
+          <label class="fl"><%= t('admin.map.form.status', 'Status') %></label>
+          <select name="is_active" id="e_server_is_active" class="fc">
+            <option value="1"><%= t('admin.map.status.active', 'Aktif') %></option>
+            <option value="0">Nonaktif</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" id="e_server_description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('editServerModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.server_modal.update', 'Update Server') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Tambah Tiang -->
+<div class="mo" id="addPoleModal">
+  <div class="mb">
+    <form action="/admin/poles" method="POST">
+      <div class="mh"><span class="mt"><i class="bi bi-broadcast-pin"></i> <%= t('admin.map.pole_modal.add_title', 'Tambah Tiang') %></span><button type="button" class="mc" onclick="closeModal('addPoleModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.pole_name', 'Nama Tiang') %></label><input type="text" name="name" class="fc" placeholder="<%= t('admin.map.form.pole_name_placeholder', 'Contoh: TIANG-01') %>" required></div>
+        <div class="form-row">
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.pole_type', 'Jenis Tiang') %></label>
+            <select name="type" class="fc">
+              <option value="beton">Beton</option>
+              <option value="besi">Besi</option>
+              <option value="kayu">Kayu</option>
+              <option value="existing">Numpang (PLN/Telkom)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.parent', 'Induk (Uplink)') %></label>
+            <select name="parent" class="fc" onchange="syncPoleParent(this, 'new_pole_parent_type', 'new_pole_parent_id')">
+              <option value=""><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></option>
+              <% (locals.servers || []).forEach(s => { %>
+                <option value="server:<%= s.id %>">🟣 <%= t('admin.map.form.server_prefix', 'Server') %>: <%= s.name %></option>
+              <% }) %>
+              <% (locals.poles || []).forEach(p => { %>
+                <option value="pole:<%= p.id %>">🟢 <%= t('admin.map.form.pole_prefix', 'Tiang') %>: <%= p.name %></option>
+              <% }) %>
+            </select>
+            <input type="hidden" name="parent_type" id="new_pole_parent_type">
+            <input type="hidden" name="parent_id" id="new_pole_parent_id">
+          </div>
+        </div>
+
+        <label class="fl"><%= t('admin.map.form.pick_location', 'Pilih Lokasi di Peta') %></label>
+        <div id="pole-picker-map"></div>
+
+        <div class="form-row">
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="new_pole_lat" class="fc" placeholder="-6.xxx" required></div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="new_pole_lng" class="fc" placeholder="106.xxx" required></div>
+        </div>
+        <p class="text-muted" style="font-size: 11px;"><%= t('admin.map.form.tips', '*Tips: Geser marker atau klik pada peta untuk menentukan posisi presisi') %></p>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('addPoleModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.pole_modal.save', 'Simpan Tiang') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Edit Tiang -->
+<div class="mo" id="editPoleModal">
+  <div class="mb">
+    <form id="editPoleForm" method="POST">
+      <div class="mh"><span class="mt"><i class="bi bi-broadcast-pin"></i> <%= t('admin.map.pole_modal.edit_title', 'Edit Tiang') %></span><button type="button" class="mc" onclick="closeModal('editPoleModal')">&times;</button></div>
+      <div class="mbody">
+        <div class="fg"><label class="fl"><%= t('admin.map.form.pole_name', 'Nama Tiang') %></label><input type="text" name="name" id="e_pole_name" class="fc" required></div>
+        <div class="form-row">
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.pole_type', 'Jenis Tiang') %></label>
+            <select name="type" id="e_pole_type" class="fc">
+              <option value="beton">Beton</option>
+              <option value="besi">Besi</option>
+              <option value="kayu">Kayu</option>
+              <option value="existing">Numpang (PLN/Telkom)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="fl"><%= t('admin.map.form.parent', 'Induk (Uplink)') %></label>
+            <select name="parent" id="e_pole_parent" class="fc" onchange="syncPoleParent(this, 'e_pole_parent_type', 'e_pole_parent_id')">
+              <option value=""><%= t('admin.map.form.no_uplink', 'Tanpa induk') %></option>
+              <% (locals.servers || []).forEach(s => { %>
+                <option value="server:<%= s.id %>">🟣 <%= t('admin.map.form.server_prefix', 'Server') %>: <%= s.name %></option>
+              <% }) %>
+              <% (locals.poles || []).forEach(p => { %>
+                <option value="pole:<%= p.id %>" data-pole-id="<%= p.id %>">🟢 <%= t('admin.map.form.pole_prefix', 'Tiang') %>: <%= p.name %></option>
+              <% }) %>
+            </select>
+            <input type="hidden" name="parent_type" id="e_pole_parent_type">
+            <input type="hidden" name="parent_id" id="e_pole_parent_id">
+          </div>
+        </div>
+        <p class="text-muted" style="font-size: 11px;"><%= t('admin.map.form.uplink_warn', '*Mengubah uplink akan menghapus jalur kabel yang sudah digambar.') %></p>
+
+        <label class="fl"><%= t('admin.map.form.adjust_location', 'Sesuaikan Lokasi di Peta') %></label>
+        <div id="pole-edit-picker-map"></div>
+
+        <div class="form-row">
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lat', 'Latitude') %></label><input type="text" name="lat" id="e_pole_lat" class="fc" required></div>
+          <div class="fg"><label class="fl"><%= t('admin.map.form.lng', 'Longitude') %></label><input type="text" name="lng" id="e_pole_lng" class="fc" required></div>
+        </div>
+        <div class="fg"><label class="fl"><%= t('admin.map.form.description', 'Deskripsi') %></label><textarea name="description" id="e_pole_description" class="fc" rows="2"></textarea></div>
+      </div>
+      <div class="mf">
+        <button type="button" class="btn btn-g" onclick="closeModal('editPoleModal')"><%= t('common.cancel', 'Batal') %></button>
+        <button type="submit" class="btn btn-p"><%= t('admin.map.pole_modal.update', 'Update Tiang') %></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Drawing Jalur Kabel -->
+<div class="mo" id="cablePathModal">
+  <div class="mb" style="max-width: 900px;">
+    <div class="mh">
+      <span class="mt"><i class="bi bi-pencil-fill"></i> Gambar Jalur Kabel</span>
+      <button type="button" class="mc" onclick="closeModal('cablePathModal')">&times;</button>
+    </div>
+    <div class="mbody">
+      <div id="cable-drawing-map"></div>
+      <p class="text-muted mt-2 small"><i class="bi bi-info-circle"></i> Tarik titik oranye untuk mengubah jalur. Klik pada garis untuk menambah titik lekukan baru.</p>
+    </div>
+    <div class="mf">
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="addMorePoints()"><i class="bi bi-plus-circle"></i> Tambah Titik Lekukan</button>
+      <button type="button" class="btn btn-g" onclick="closeModal('cablePathModal')">Batal</button>
+      <button type="button" class="btn btn-p" onclick="saveCablePath()">Simpan Jalur Kabel</button>
+    </div>
+  </div>
+</div>
+
+<script id="settings-data" type="application/json"><%- JSON.stringify(settings) %></script>
+<script id="customers-data" type="application/json"><%- JSON.stringify(customers).replace(/<\/script/g, '<\\/script').replace(/<!--/g, '<\\!--') %></script>
+<script id="odps-data" type="application/json"><%- JSON.stringify(odps).replace(/<\/script/g, '<\\/script').replace(/<!--/g, '<\\!--') %></script>
+<script id="servers-data" type="application/json"><%- JSON.stringify(locals.servers || []).replace(/<\/script/g, '<\\/script').replace(/<!--/g, '<\\!--') %></script>
+<script id="poles-data" type="application/json"><%- JSON.stringify(locals.poles || []).replace(/<\/script/g, '<\\/script').replace(/<!--/g, '<\\!--') %></script>
+<script>
+  const I18N = {
+    layerOsm: "<%= t('admin.map.layers.osm', 'OpenStreetMap') %>",
+    layerHybrid: "<%= t('admin.map.layers.hybrid', 'Satelit (Hybrid)') %>",
+    popupDescription: "<%= t('admin.map.popup.description', 'Deskripsi') %>",
+    popupLocation: "<%= t('admin.map.popup.location', 'Lokasi') %>",
+    popupEdit: "<%= t('common.edit', 'Edit') %>",
+    popupStatus: "<%= t('admin.map.popup.status', 'Status') %>",
+    popupPackage: "<%= t('admin.map.popup.package', 'Paket') %>",
+    popupAddress: "<%= t('admin.map.popup.address', 'Alamat') %>",
+    viewDetails: "<%= t('admin.map.popup.view_details', 'Lihat Detail') %>",
+    statusActive: "<%= t('admin.map.status.active', 'Aktif') %>",
+    statusSuspended: "<%= t('admin.map.status.suspended', 'Isolir') %>"
+  };
+
+  const appSettings = JSON.parse(document.getElementById('settings-data').textContent);
+  const officeCoords = {
+    lat: parseFloat(appSettings.office_lat) || -6.200000,
+    lng: parseFloat(appSettings.office_lng) || 106.816666
+  };
+
+  // Initialize Map
+  const map = L.map('map', {
+    editable: true
+  }).setView([officeCoords.lat, officeCoords.lng], 13);
+
+  let currentEditingPolyline = null;
+  let currentEditingCustomer = null;
+  let currentEditingNode = null; // { type: 'pole'|'odp', id } untuk jalur backbone
+
+  // Layers
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  });
+
+  const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    maxZoom: 20,
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    attribution: '© Google Satellite'
+  });
+
+  osm.addTo(map);
+  googleHybrid.addTo(map);
+
+  const baseMaps = {
+    [I18N.layerOsm]: osm,
+    [I18N.layerHybrid]: googleHybrid
+  };
+
+  L.control.layers(baseMaps).addTo(map);
+
+  let customers = [];
+  let odps = [];
+  let servers = [];
+  let poles = [];
+  try {
+    customers = JSON.parse(document.getElementById('customers-data').textContent || '[]');
+    odps = JSON.parse(document.getElementById('odps-data').textContent || '[]');
+    servers = JSON.parse(document.getElementById('servers-data').textContent || '[]');
+    poles = JSON.parse(document.getElementById('poles-data').textContent || '[]');
+  } catch (e) {
+    console.error("Data mapping error:", e);
+  }
+
+  // Registry koordinat & marker tiap node, dipakai untuk menggambar garis topologi.
+  const odpMarkers = {};    // { [odpId]: { coord: [lat,lng], marker } }
+  const serverMarkers = {}; // { [serverId]: { coord: [lat,lng], marker } }
+  const poleMarkers = {};   // { [poleId]: { coord: [lat,lng], marker } }
+
+  function escapeHtml(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function coordOf(nodeType, nodeId) {
+    const id = Number(nodeId);
+    if (!Number.isFinite(id) || !id) return null;
+    const reg = nodeType === 'server' ? serverMarkers : nodeType === 'pole' ? poleMarkers : odpMarkers;
+    return reg[id] ? reg[id].coord : null;
+  }
+
+  /** Ambil uplink efektif ODP: tiang lebih diprioritaskan daripada server. */
+  function odpUplink(odp) {
+    if (odp.pole_id && poleMarkers[Number(odp.pole_id)]) return { type: 'pole', id: Number(odp.pole_id) };
+    if (odp.server_id && serverMarkers[Number(odp.server_id)]) return { type: 'server', id: Number(odp.server_id) };
+    return null;
+  }
+
+  /** Gambar garis backbone; pakai cable_path tersimpan kalau ada, kalau tidak garis lurus. */
+  function drawBackboneLine(fromCoord, toCoord, cablePath, style) {
+    let pathCoords = [fromCoord, toCoord];
+    if (cablePath) {
+      try {
+        const parsed = JSON.parse(cablePath);
+        if (Array.isArray(parsed) && parsed.length >= 2) pathCoords = parsed;
+      } catch (e) { /* pakai garis lurus */ }
+    }
+    return L.polyline(pathCoords, style).addTo(map);
+  }
+
+  // ─── SERVER MARKERS ──────────────────────────────────────────────────────
+  const SERVER_TYPE_LABEL = { pop: 'POP / Kantor', olt: 'OLT', router: 'Router', backbone: 'Backbone', bts: 'BTS / Tower' };
+  servers.forEach(srv => {
+    if (!srv.lat || !srv.lng) return;
+    const coord = [parseFloat(srv.lat), parseFloat(srv.lng)];
+    const isOn = Number(srv.is_active) === 1;
+    const marker = L.marker(coord, {
+      zIndexOffset: 1000,
+      icon: L.divIcon({
+        html: `<i class="bi bi-hdd-network-fill ${isOn ? 'marker-server' : 'marker-server-off'}"></i>`,
+        className: 'custom-div-icon',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11]
+      })
+    }).addTo(map);
+
+    marker.bindPopup(`
+      <div class="popup-content">
+        <h6><i class="bi bi-hdd-network-fill" style="color:#8b5cf6"></i> ${escapeHtml(srv.name)}</h6>
+        <div><strong>Tipe:</strong> ${escapeHtml(SERVER_TYPE_LABEL[srv.type] || srv.type || '-')}</div>
+        <div><strong>Kapasitas:</strong> ${Number(srv.capacity) > 0 ? Number(srv.capacity) + ' port/core' : 'Tak dibatasi'}</div>
+        <div><strong>${I18N.popupAddress}:</strong> ${escapeHtml(srv.address || '-')}</div>
+        <div><strong>${I18N.popupDescription}:</strong> ${escapeHtml(srv.description || '-')}</div>
+        <div><strong>${I18N.popupLocation}:</strong> ${escapeHtml(srv.lat)}, ${escapeHtml(srv.lng)}</div>
+        <div class="popup-actions">
+          <button class="btn btn-sm btn-p" onclick="editServerById(${Number(srv.id)})">${I18N.popupEdit}</button>
+        </div>
+      </div>
+    `);
+
+    serverMarkers[Number(srv.id)] = { coord, marker };
+  });
+
+  // ─── POLE MARKERS ────────────────────────────────────────────────────────
+  const POLE_TYPE_LABEL = { beton: 'Beton', besi: 'Besi', kayu: 'Kayu', existing: 'Numpang (PLN/Telkom)' };
+  poles.forEach(pole => {
+    if (!pole.lat || !pole.lng) return;
+    const coord = [parseFloat(pole.lat), parseFloat(pole.lng)];
+    const marker = L.marker(coord, {
+      zIndexOffset: 500,
+      icon: L.divIcon({
+        html: '<i class="bi bi-broadcast-pin marker-pole"></i>',
+        className: 'custom-div-icon',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
+      })
+    }).addTo(map);
+
+    marker.bindPopup(`
+      <div class="popup-content">
+        <h6><i class="bi bi-broadcast-pin" style="color:#10b981"></i> ${escapeHtml(pole.name)}</h6>
+        <div><strong>Jenis:</strong> ${escapeHtml(POLE_TYPE_LABEL[pole.type] || pole.type || '-')}</div>
+        <div><strong>Induk:</strong> ${escapeHtml(pole.parent_name || 'Tanpa induk')}</div>
+        <div><strong>${I18N.popupDescription}:</strong> ${escapeHtml(pole.description || '-')}</div>
+        <div><strong>${I18N.popupLocation}:</strong> ${escapeHtml(pole.lat)}, ${escapeHtml(pole.lng)}</div>
+        <div class="popup-actions">
+          <button class="btn btn-sm btn-p" onclick="editPoleById(${Number(pole.id)})">${I18N.popupEdit}</button>
+          ${pole.parent_type && pole.parent_id ? `<button class="btn btn-sm btn-g" onclick="startBackboneDrawing('pole', ${Number(pole.id)})"><i class="bi bi-pencil-fill"></i> Gambar Jalur</button>` : ''}
+        </div>
+      </div>
+    `);
+
+    poleMarkers[Number(pole.id)] = { coord, marker };
+  });
+
+  // ─── GARIS: TIANG -> INDUK (server / tiang lain) ─────────────────────────
+  poles.forEach(pole => {
+    const from = coordOf('pole', pole.id);
+    if (!from || !pole.parent_type || !pole.parent_id) return;
+    const to = coordOf(pole.parent_type, pole.parent_id);
+    if (!to) return;
+    drawBackboneLine(from, to, pole.cable_path, {
+      color: '#8b5cf6',
+      weight: 4,
+      opacity: 0.85,
+      dashArray: '12, 6',
+      className: 'flowing-line'
+    });
+  });
+
+  // ─── ODP MARKERS + GARIS ODP -> UPLINK ───────────────────────────────────
+  odps.forEach(odp => {
+    if (!odp.lat || !odp.lng) return;
+    const coord = [parseFloat(odp.lat), parseFloat(odp.lng)];
+    const marker = L.marker(coord, {
+      icon: L.divIcon({
+        html: '<i class="bi bi-box-seam-fill marker-odp"></i>',
+        className: 'custom-div-icon',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      })
+    }).addTo(map);
+
+    const uplinkName = odp.pole_name || odp.server_name || 'Tanpa induk';
+    marker.bindPopup(`
+      <div class="popup-content">
+        <h6><i class="bi bi-box-seam-fill" style="color:#f59e0b"></i> ${escapeHtml(odp.name)}</h6>
+        <div><strong>Induk:</strong> ${escapeHtml(uplinkName)}</div>
+        <div><strong>${I18N.popupDescription}:</strong> ${escapeHtml(odp.description || '-')}</div>
+        <div><strong>${I18N.popupLocation}:</strong> ${escapeHtml(odp.lat)}, ${escapeHtml(odp.lng)}</div>
+        <div class="popup-actions">
+          <button class="btn btn-sm btn-p" onclick="editOdpById(${Number(odp.id)})">${I18N.popupEdit}</button>
+          ${(odp.pole_id || odp.server_id) ? `<button class="btn btn-sm btn-g" onclick="startBackboneDrawing('odp', ${Number(odp.id)})"><i class="bi bi-pencil-fill"></i> Gambar Jalur</button>` : ''}
+        </div>
+      </div>
+    `);
+
+    odpMarkers[Number(odp.id)] = { coord, marker };
+  });
+
+  // Garis digambar setelah semua marker terdaftar supaya uplink pasti ketemu.
+  odps.forEach(odp => {
+    const from = coordOf('odp', odp.id);
+    if (!from) return;
+    const up = odpUplink(odp);
+    if (!up) return;
+    const to = coordOf(up.type, up.id);
+    if (!to) return;
+    drawBackboneLine(from, to, odp.cable_path, {
+      color: '#f59e0b',
+      weight: 3.5,
+      opacity: 0.85,
+      dashArray: '10, 6',
+      className: 'flowing-line'
+    });
+  });
+
+  // Add Customer Markers
+  customers.forEach(cust => {
+    if (cust.lat && cust.lng) {
+      const is_active = cust.status === 'active';
+      const iconClass = is_active ? 'marker-cust-active' : 'marker-cust-suspended';
+      const downMaxMbps = (cust.speed_down && Number(cust.speed_down) > 0) ? Math.max(1, Math.round(Number(cust.speed_down) / 1000)) : 10;
+      const upMaxMbps = (cust.speed_up && Number(cust.speed_up) > 0) ? Math.max(1, Math.round(Number(cust.speed_up) / 1000)) : 10;
+      const waLink = buildWaLink(cust.phone, cust.name);
+      const mapsLink = buildMapsLink(cust.lat, cust.lng);
+      
+      // Draw line to ODP if connected
+      const custOdpCoord = coordOf('odp', cust.odp_id);
+      if (custOdpCoord) {
+        let pathCoords = [[parseFloat(cust.lat), parseFloat(cust.lng)], custOdpCoord];
+
+        if (cust.cable_path) {
+          try {
+            pathCoords = JSON.parse(cust.cable_path);
+          } catch(e) {}
+        }
+
+        const polyline = L.polyline(pathCoords, {
+          color: is_active ? '#3b82f6' : '#ef4444',
+          weight: 3,
+          opacity: 0.8,
+          dashArray: '10, 10',
+          className: 'flowing-line'
+        }).addTo(map);
+
+        polyline.on('click', (e) => {
+          if (currentEditingPolyline === polyline) {
+             L.DomEvent.stopPropagation(e);
+          }
+        });
+      }
+
+      const marker = L.marker([cust.lat, cust.lng], {
+        icon: L.divIcon({
+          html: `<i class="bi bi-person-fill ${iconClass}"></i>`,
+          className: 'custom-div-icon',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+      }).addTo(map);
+
+      marker.bindPopup(`
+        <div class="cust-popup">
+          <div class="cp-head">
+            <div class="cp-avatar"><i class="bi bi-person-fill"></i></div>
+            <div class="cp-title">
+              <div class="cp-name">${cust.name}</div>
+              <div class="cp-badges">
+                <span class="cp-chip ${is_active ? 'cp-chip-active' : 'cp-chip-suspended'}"><i class="bi bi-shield-check"></i>${is_active ? I18N.statusActive : I18N.statusSuspended}</span>
+                <span class="cp-chip"><i class="bi bi-box-seam"></i>${cust.package_name || '-'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cp-meta">
+            <div class="cp-meta-item"><i class="bi bi-router"></i><span>${cust.pppoe_username || '-'}</span></div>
+            <div class="cp-meta-item"><i class="bi bi-tag"></i><span>${cust.genieacs_tag || '-'}</span></div>
+            <div class="cp-meta-item"><i class="bi bi-receipt"></i><span>${Number(cust.unpaid_count || 0)} belum bayar</span></div>
+            <div class="cp-meta-item"><i class="bi bi-geo-alt"></i><span>${cust.address || '-'}</span></div>
+          </div>
+
+          <div class="cp-traffic">
+            <div class="cp-traffic-head"><i class="bi bi-activity"></i><span>Trafik Realtime</span></div>
+            <div class="cp-traffic-grid">
+              <div class="cp-chart">
+                <div class="cp-chart-label"><i class="bi bi-download"></i><span>Download</span></div>
+                <canvas class="cp-spark" id="cust_${cust.id}_dl_chart" width="160" height="70" data-max="${downMaxMbps}"></canvas>
+                <div class="cp-overlay" id="cust_${cust.id}_dl_state"></div>
+              </div>
+              <div class="cp-chart">
+                <div class="cp-chart-label"><i class="bi bi-upload"></i><span>Upload</span></div>
+                <canvas class="cp-spark" id="cust_${cust.id}_ul_chart" width="160" height="70" data-max="${upMaxMbps}"></canvas>
+                <div class="cp-overlay" id="cust_${cust.id}_ul_state"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="popup-actions">
+             <button onclick="startCableDrawing(${cust.id}, ${cust.lat}, ${cust.lng}, ${cust.odp_id})" class="btn btn-sm btn-p"><i class="bi bi-pencil-fill me-1"></i>Gambar Jalur</button>
+             <a href="/admin/customers?search=${encodeURIComponent(cust.name || '')}" class="btn btn-sm btn-g"><i class="bi bi-eye me-1"></i>Detail</a>
+             <a href="${waLink}" target="_blank" class="btn btn-sm btn-wa"><i class="bi bi-whatsapp"></i></a>
+          </div>
+        </div>
+      `);
+
+      marker.on('popupopen', () => startCustomerTrafficPopup(cust.id));
+      marker.on('popupclose', () => stopCustomerTrafficPopup(cust.id));
+    }
+  });
+
+  // Cable Drawing Modal Map
+  let drawingMap, drawingPolyline, drawingMarkers = [];
+  
+  function interpolatePoints(p1, p2, count) {
+    const points = [p1];
+    for (let i = 1; i <= count; i++) {
+      const lat = p1[0] + (p2[0] - p1[0]) * (i / (count + 1));
+      const lng = p1[1] + (p2[1] - p1[1]) * (i / (count + 1));
+      points.push([lat, lng]);
+    }
+    points.push(p2);
+    return points;
+  }
+
+  function renderEditorMarkers() {
+    // Clear old markers
+    drawingMarkers.forEach(m => drawingMap.removeLayer(m));
+    drawingMarkers = [];
+
+    const latlngs = drawingPolyline.getLatLngs();
+    
+    latlngs.forEach((ll, index) => {
+      const isEdge = index === 0 || index === latlngs.length - 1;
+      
+      const marker = L.marker(ll, {
+        draggable: true,
+        zIndexOffset: 2000,
+        icon: L.divIcon({
+          html: `<div style="background: ${isEdge ? '#3b82f6' : '#ff0000'}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+          className: 'custom-div-icon',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+      }).addTo(drawingMap);
+
+      marker.on('drag', (e) => {
+        const newLatLngs = drawingPolyline.getLatLngs();
+        newLatLngs[index] = e.latlng;
+        drawingPolyline.setLatLngs(newLatLngs);
+      });
+
+      drawingMarkers.push(marker);
+    });
+  }
+
+  function startCableDrawing(customerId, lat, lng, odpId) {
+    const odpCoord = coordOf('odp', odpId);
+    if (!odpCoord) return alert('Data ODP tidak ditemukan');
+
+    currentEditingCustomer = customerId;
+    currentEditingNode = null; // mode pelanggan
+    openModal('cablePathModal');
+
+    setTimeout(() => {
+      try {
+        if (drawingMap) drawingMap.remove();
+        
+        drawingMap = L.map('cable-drawing-map').setView([lat, lng], 17);
+        
+        L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+          maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        }).addTo(drawingMap);
+
+        const customer = customers.find(c => c.id === customerId);
+        let pathCoords = [];
+        if (customer && customer.cable_path) {
+          try { pathCoords = JSON.parse(customer.cable_path); } catch(e) {}
+        }
+        
+        if (pathCoords.length <= 2) {
+          pathCoords = interpolatePoints([parseFloat(lat), parseFloat(lng)], odpCoord, 5);
+        }
+
+        drawingPolyline = L.polyline(pathCoords, {
+          color: '#f59e0b', weight: 6, dashArray: '5, 5', interactive: false
+        }).addTo(drawingMap);
+
+        renderEditorMarkers();
+
+        setTimeout(() => {
+          drawingMap.invalidateSize();
+          drawingMap.fitBounds(drawingPolyline.getBounds(), { padding: [50, 50] });
+        }, 200);
+
+      } catch (err) {
+        console.error("Drawing map error:", err);
+      }
+    }, 600);
+  }
+
+  function addMorePoints() {
+    if (!drawingPolyline || !drawingMap) return;
+    const latlngs = drawingPolyline.getLatLngs();
+    const newPath = [];
+    for (let i = 0; i < latlngs.length - 1; i++) {
+      newPath.push(latlngs[i]);
+      const midLat = (latlngs[i].lat + latlngs[i+1].lat) / 2;
+      const midLng = (latlngs[i].lng + latlngs[i+1].lng) / 2;
+      newPath.push(L.latLng(midLat, midLng));
+    }
+    newPath.push(latlngs[latlngs.length - 1]);
+    drawingPolyline.setLatLngs(newPath);
+    renderEditorMarkers();
+  }
+
+  /**
+   * Editor jalur kabel untuk node backbone (tiang / ODP) ke uplink-nya.
+   * Memakai modal & polyline editor yang sama dengan jalur pelanggan.
+   */
+  function startBackboneDrawing(nodeType, nodeId) {
+    const id = Number(nodeId);
+    const node = nodeType === 'pole'
+      ? poles.find(p => Number(p.id) === id)
+      : odps.find(o => Number(o.id) === id);
+    if (!node) return alert('Data node tidak ditemukan');
+
+    const fromCoord = coordOf(nodeType, id);
+    if (!fromCoord) return alert('Koordinat node belum diisi');
+
+    const up = nodeType === 'pole'
+      ? (node.parent_type && node.parent_id ? { type: node.parent_type, id: Number(node.parent_id) } : null)
+      : odpUplink(node);
+    if (!up) return alert('Node ini belum punya induk (uplink). Set induknya dulu lewat Edit.');
+
+    const toCoord = coordOf(up.type, up.id);
+    if (!toCoord) return alert('Koordinat induk belum diisi');
+
+    currentEditingCustomer = null;
+    currentEditingNode = { type: nodeType, id };
+    openModal('cablePathModal');
+
+    setTimeout(() => {
+      try {
+        if (drawingMap) drawingMap.remove();
+        drawingMap = L.map('cable-drawing-map').setView(fromCoord, 17);
+        L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+          maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        }).addTo(drawingMap);
+
+        let pathCoords = [];
+        if (node.cable_path) {
+          try { pathCoords = JSON.parse(node.cable_path); } catch (e) {}
+        }
+        if (!Array.isArray(pathCoords) || pathCoords.length <= 2) {
+          pathCoords = interpolatePoints(fromCoord, toCoord, 5);
+        }
+
+        drawingPolyline = L.polyline(pathCoords, {
+          color: nodeType === 'pole' ? '#8b5cf6' : '#f59e0b',
+          weight: 6, dashArray: '5, 5', interactive: false
+        }).addTo(drawingMap);
+
+        renderEditorMarkers();
+
+        setTimeout(() => {
+          drawingMap.invalidateSize();
+          drawingMap.fitBounds(drawingPolyline.getBounds(), { padding: [50, 50] });
+        }, 200);
+      } catch (err) {
+        console.error('Backbone drawing map error:', err);
+      }
+    }, 600);
+  }
+
+  async function saveCablePath() {
+    if (!drawingPolyline) return;
+    if (!currentEditingCustomer && !currentEditingNode) return;
+
+    const latlngs = drawingPolyline.getLatLngs().map(ll => [ll.lat, ll.lng]);
+    const pathJson = JSON.stringify(latlngs);
+
+    let endpoint;
+    if (currentEditingNode) {
+      const seg = currentEditingNode.type === 'pole' ? 'poles' : 'odps';
+      endpoint = `/admin/api/${seg}/${currentEditingNode.id}/cable-path`;
+    } else {
+      endpoint = `/admin/api/customers/${currentEditingCustomer}/cable-path`;
+    }
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ path: pathJson })
+      });
+
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (data.ok) {
+          alert('Jalur kabel berhasil disimpan!');
+          location.reload();
+        } else {
+          alert('Gagal menyimpan: ' + data.error);
+        }
+      } else {
+        const text = await res.text();
+        console.error("Server returned non-JSON response:", text);
+        alert('Gagal menyimpan: Server mengembalikan respon tidak valid (HTML/404). Periksa konsol browser.');
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  // Modal functions
+  let pickerMap, pickerMarker;
+  let editPickerMap, editPickerMarker;
+
+  function initPickerMap(lat, lng) {
+    if (!pickerMap) {
+      pickerMap = L.map('picker-map').setView([lat, lng], 16);
+      L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      }).addTo(pickerMap);
+      
+      const odpIcon = L.divIcon({
+        html: '<i class="bi bi-box-seam-fill picker-icon-odp"></i>',
+        className: 'custom-div-icon',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+
+      pickerMarker = L.marker([lat, lng], { 
+        draggable: true,
+        icon: odpIcon
+      }).addTo(pickerMap);
+      
+      pickerMarker.on('dragend', function(e) {
+        const pos = pickerMarker.getLatLng();
+        document.getElementById('new_lat').value = pos.lat.toFixed(6);
+        document.getElementById('new_lng').value = pos.lng.toFixed(6);
+      });
+
+      pickerMap.on('click', function(e) {
+        pickerMarker.setLatLng(e.latlng);
+        document.getElementById('new_lat').value = e.latlng.lat.toFixed(6);
+        document.getElementById('new_lng').value = e.latlng.lng.toFixed(6);
+      });
+    } else {
+      pickerMap.setView([lat, lng], 16);
+      pickerMarker.setLatLng([lat, lng]);
+    }
+    setTimeout(() => pickerMap.invalidateSize(), 300);
+  }
+
+  function initEditPickerMap(lat, lng) {
+    if (!editPickerMap) {
+      editPickerMap = L.map('edit-picker-map').setView([lat, lng], 16);
+      L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      }).addTo(editPickerMap);
+      
+      const odpIcon = L.divIcon({
+        html: '<i class="bi bi-box-seam-fill picker-icon-odp"></i>',
+        className: 'custom-div-icon',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+
+      editPickerMarker = L.marker([lat, lng], { 
+        draggable: true,
+        icon: odpIcon
+      }).addTo(editPickerMap);
+      
+      editPickerMarker.on('dragend', function(e) {
+        const pos = editPickerMarker.getLatLng();
+        document.getElementById('e_odp_lat').value = pos.lat.toFixed(6);
+        document.getElementById('e_odp_lng').value = pos.lng.toFixed(6);
+      });
+
+      editPickerMap.on('click', function(e) {
+        editPickerMarker.setLatLng(e.latlng);
+        document.getElementById('e_odp_lat').value = e.latlng.lat.toFixed(6);
+        document.getElementById('e_odp_lng').value = e.latlng.lng.toFixed(6);
+      });
+    } else {
+      editPickerMap.setView([lat, lng], 16);
+      editPickerMarker.setLatLng([lat, lng]);
+    }
+    setTimeout(() => editPickerMap.invalidateSize(), 300);
+  }
+
+  /**
+   * Picker peta generik untuk modal server & tiang.
+   * Menyimpan instance per-container agar tidak diinisialisasi ulang.
+   */
+  const genericPickers = {};
+
+  function initGenericPicker(containerId, latInputId, lngInputId, iconClass, lat, lng) {
+    const startLat = parseFloat(lat) || officeCoords.lat;
+    const startLng = parseFloat(lng) || officeCoords.lng;
+    const existing = genericPickers[containerId];
+
+    if (!existing) {
+      const m = L.map(containerId).setView([startLat, startLng], 16);
+      L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      }).addTo(m);
+
+      const mk = L.marker([startLat, startLng], {
+        draggable: true,
+        icon: L.divIcon({
+          html: `<i class="${iconClass}"></i>`,
+          className: 'custom-div-icon',
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        })
+      }).addTo(m);
+
+      const writeCoords = (ll) => {
+        document.getElementById(latInputId).value = ll.lat.toFixed(6);
+        document.getElementById(lngInputId).value = ll.lng.toFixed(6);
+      };
+
+      mk.on('dragend', () => writeCoords(mk.getLatLng()));
+      m.on('click', (e) => { mk.setLatLng(e.latlng); writeCoords(e.latlng); });
+
+      genericPickers[containerId] = { map: m, marker: mk };
+    } else {
+      existing.map.setView([startLat, startLng], 16);
+      existing.marker.setLatLng([startLat, startLng]);
+    }
+    setTimeout(() => genericPickers[containerId].map.invalidateSize(), 300);
+  }
+
+  function openModal(id) {
+    document.getElementById(id).style.display = 'flex';
+    if (id === 'addOdpModal') {
+      const lat = document.getElementById('new_lat').value || officeCoords.lat;
+      const lng = document.getElementById('new_lng').value || officeCoords.lng;
+      initPickerMap(lat, lng);
+    } else if (id === 'addServerModal') {
+      initGenericPicker('server-picker-map', 'new_server_lat', 'new_server_lng', 'bi bi-hdd-network-fill picker-icon-server',
+        document.getElementById('new_server_lat').value, document.getElementById('new_server_lng').value);
+    } else if (id === 'addPoleModal') {
+      initGenericPicker('pole-picker-map', 'new_pole_lat', 'new_pole_lng', 'bi bi-broadcast-pin picker-icon-pole',
+        document.getElementById('new_pole_lat').value, document.getElementById('new_pole_lng').value);
+    }
+  }
+
+  function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+  /** Pecah nilai select "tipe:id" ke dua hidden input server_id / pole_id. */
+  function syncOdpUplink(select, serverInputId, poleInputId) {
+    const [type, id] = String(select.value || '').split(':');
+    document.getElementById(serverInputId).value = type === 'server' ? (id || '') : '';
+    document.getElementById(poleInputId).value = type === 'pole' ? (id || '') : '';
+  }
+
+  /** Pecah nilai select "tipe:id" ke hidden input parent_type / parent_id. */
+  function syncPoleParent(select, typeInputId, idInputId) {
+    const [type, id] = String(select.value || '').split(':');
+    document.getElementById(typeInputId).value = type || '';
+    document.getElementById(idInputId).value = id || '';
+  }
+
+  function switchNodeTab(btn) {
+    document.querySelectorAll('.node-tab').forEach(b => b.classList.toggle('on', b === btn));
+    const target = btn.dataset.pane;
+    document.querySelectorAll('.node-pane').forEach(p => p.classList.toggle('on', p.id === target));
+  }
+
+  function focusNode(nodeType, id) {
+    const reg = nodeType === 'server' ? serverMarkers : nodeType === 'pole' ? poleMarkers : odpMarkers;
+    const entry = reg[Number(id)];
+    if (!entry || !entry.marker) return;
+    map.setView(entry.marker.getLatLng(), 18, { animate: true });
+    try { entry.marker.openPopup(); } catch (e) {}
+  }
+
+  function deleteNode(segment, id, label) {
+    if (!confirm(`Hapus ${label} ini? Node yang terhubung akan dilepas, bukan ikut terhapus.`)) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/admin/${segment}/${id}/delete`;
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  function editServerById(id) {
+    const srv = servers.find(s => Number(s.id) === Number(id));
+    if (!srv) return;
+    document.getElementById('editServerForm').action = '/admin/servers/' + srv.id + '/update';
+    document.getElementById('e_server_name').value = srv.name || '';
+    document.getElementById('e_server_type').value = srv.type || 'pop';
+    document.getElementById('e_server_capacity').value = Number(srv.capacity) || 0;
+    document.getElementById('e_server_lat').value = srv.lat || '';
+    document.getElementById('e_server_lng').value = srv.lng || '';
+    document.getElementById('e_server_address').value = srv.address || '';
+    document.getElementById('e_server_is_active').value = Number(srv.is_active) === 1 ? '1' : '0';
+    document.getElementById('e_server_description').value = srv.description || '';
+    openModal('editServerModal');
+    initGenericPicker('server-edit-picker-map', 'e_server_lat', 'e_server_lng', 'bi bi-hdd-network-fill picker-icon-server', srv.lat, srv.lng);
+  }
+
+  function editPoleById(id) {
+    const pole = poles.find(p => Number(p.id) === Number(id));
+    if (!pole) return;
+    document.getElementById('editPoleForm').action = '/admin/poles/' + pole.id + '/update';
+    document.getElementById('e_pole_name').value = pole.name || '';
+    document.getElementById('e_pole_type').value = pole.type || 'beton';
+    document.getElementById('e_pole_lat').value = pole.lat || '';
+    document.getElementById('e_pole_lng').value = pole.lng || '';
+    document.getElementById('e_pole_description').value = pole.description || '';
+
+    // Sembunyikan diri sendiri dari daftar induk supaya tidak bisa jadi induk sendiri.
+    const parentSelect = document.getElementById('e_pole_parent');
+    Array.from(parentSelect.options).forEach(opt => {
+      opt.hidden = opt.value === `pole:${pole.id}`;
+    });
+    parentSelect.value = (pole.parent_type && pole.parent_id) ? `${pole.parent_type}:${pole.parent_id}` : '';
+    syncPoleParent(parentSelect, 'e_pole_parent_type', 'e_pole_parent_id');
+
+    openModal('editPoleModal');
+    initGenericPicker('pole-edit-picker-map', 'e_pole_lat', 'e_pole_lng', 'bi bi-broadcast-pin picker-icon-pole', pole.lat, pole.lng);
+  }
+
+  function editOdp(odp) {
+    document.getElementById('editOdpForm').action = '/admin/odps/' + odp.id + '/update';
+    document.getElementById('e_odp_name').value = odp.name;
+    document.getElementById('e_odp_lat').value = odp.lat;
+    document.getElementById('e_odp_lng').value = odp.lng;
+    document.getElementById('e_odp_description').value = odp.description || '';
+
+    const uplinkSelect = document.getElementById('e_odp_uplink');
+    if (odp.pole_id) uplinkSelect.value = `pole:${odp.pole_id}`;
+    else if (odp.server_id) uplinkSelect.value = `server:${odp.server_id}`;
+    else uplinkSelect.value = '';
+    syncOdpUplink(uplinkSelect, 'e_odp_server_id', 'e_odp_pole_id');
+
+    openModal('editOdpModal');
+    initEditPickerMap(odp.lat, odp.lng);
+  }
+
+  function editOdpById(id) {
+    const n = Number(id);
+    if (!Number.isFinite(n) || !odps || !Array.isArray(odps)) return;
+    const found = odps.find(o => Number(o.id) === n);
+    if (!found) return;
+    editOdp(found);
+  }
+
+  function editOdpFromBtn(btn) {
+    if (!btn || !btn.dataset) return;
+    editOdpById(btn.dataset.odpId);
+  }
+
+  function deleteOdpFromBtn(btn) {
+    if (!btn || !btn.dataset) return;
+    const odpId = btn.dataset.odpId;
+    if (confirm('Apakah Anda yakin ingin menghapus ODP ini?')) {
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `/admin/odps/${odpId}/delete`;
+      document.body.appendChild(form);
+      form.submit();
+    }
+  }
+
+  function focusOdpFromBtn(btn) {
+    if (!btn || !btn.dataset) return;
+    focusOdp(btn.dataset.odpId);
+  }
+
+  // Klik kanan pada peta: isi koordinat ke semua form tambah, lalu buka ODP (default).
+  // Kalau mau server/tiang, tinggal tutup lalu klik tombol di toolbar — koordinat sudah terisi.
+  map.on('contextmenu', function(e) {
+    const lat = e.latlng.lat.toFixed(6);
+    const lng = e.latlng.lng.toFixed(6);
+
+    [['new_lat', 'new_lng'], ['new_server_lat', 'new_server_lng'], ['new_pole_lat', 'new_pole_lng']].forEach(([latId, lngId]) => {
+      const latEl = document.getElementById(latId);
+      const lngEl = document.getElementById(lngId);
+      if (latEl) latEl.value = lat;
+      if (lngEl) lngEl.value = lng;
+    });
+
+    openModal('addOdpModal');
+  });
+
+  // Auto zoom to markers if exist
+  const group = L.featureGroup([...map._layers].filter(l => l instanceof L.Marker || l instanceof L.CircleMarker));
+  if (group.getLayers().length > 0) {
+    map.fitBounds(group.getBounds().pad(0.1));
+  }
+
+  // Fix for blank map on load
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 500);
+
+  window.onclick = function(e) {
+    if (e.target.className === 'mo') {
+      e.target.style.display = 'none';
+    }
+  }
+
+  const customerTrafficIntervals = {};
+  const customerTrafficSeries = {};
+
+  function focusOdp(id) {
+    focusNode('odp', id);
+  }
+
+  // Pencarian untuk semua tabel node (server / tiang / ODP)
+  (function bindNodeSearches() {
+    document.querySelectorAll('input[data-search-for]').forEach(input => {
+      const tbody = document.getElementById(input.dataset.searchFor);
+      if (!tbody) return;
+
+      function apply() {
+        const q = String(input.value || '').trim().toLowerCase();
+        tbody.querySelectorAll('tr[data-name]').forEach(r => {
+          const name = String(r.getAttribute('data-name') || '');
+          r.style.display = !q || name.includes(q) ? '' : 'none';
+        });
+      }
+
+      input.addEventListener('input', apply);
+      apply();
+    });
+  })();
+
+  function drawSparkline(canvas, series, maxMbps, color) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    const padX = 6;
+    const padY = 8;
+    const innerW = w - padX * 2;
+    const innerH = h - padY * 2;
+    const max = Number.isFinite(maxMbps) && maxMbps > 0 ? maxMbps : 10;
+    let vals = Array.isArray(series) ? series : [];
+
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= 3; i++) {
+      const y = padY + (innerH * i) / 3;
+      ctx.moveTo(padX, y);
+      ctx.lineTo(padX + innerW, y);
+    }
+    ctx.stroke();
+
+    if (vals.length === 1) vals = [vals[0], vals[0]];
+    if (vals.length < 2) return;
+
+    const toY = (v) => {
+      const n = Math.max(0, Number(v || 0) || 0);
+      const r = Math.min(1, n / max);
+      return padY + innerH * (1 - r);
+    };
+
+    const grad = ctx.createLinearGradient(padX, padY, padX + innerW, padY);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'rgba(255,255,255,0.0)');
+
+    ctx.beginPath();
+    for (let i = 0; i < vals.length; i++) {
+      const x = padX + (innerW * i) / (vals.length - 1);
+      const y = toY(vals[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    ctx.lineTo(padX + innerW, padY + innerH);
+    ctx.lineTo(padX, padY + innerH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.globalAlpha = 0.22;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function setOverlay(customerId, kind, text) {
+    const el = document.getElementById(`cust_${customerId}_${kind}_state`);
+    if (!el) return;
+    const t = String(text || '').trim();
+    el.textContent = t;
+    if (t) el.classList.add('on');
+    else el.classList.remove('on');
+  }
+
+  function updatePopupTraffic(customerId, dlMbps, ulMbps, labelOverride) {
+    const dlCanvas = document.getElementById(`cust_${customerId}_dl_chart`);
+    const ulCanvas = document.getElementById(`cust_${customerId}_ul_chart`);
+    const dlMax = Number(dlCanvas && dlCanvas.dataset ? dlCanvas.dataset.max : 10) || 10;
+    const ulMax = Number(ulCanvas && ulCanvas.dataset ? ulCanvas.dataset.max : 10) || 10;
+
+    if (!customerTrafficSeries[customerId]) customerTrafficSeries[customerId] = { dl: [], ul: [] };
+    const st = customerTrafficSeries[customerId];
+
+    if (labelOverride) {
+      setOverlay(customerId, 'dl', labelOverride);
+      setOverlay(customerId, 'ul', labelOverride);
+      st.dl = [];
+      st.ul = [];
+      drawSparkline(dlCanvas, [0, 0], dlMax, 'rgba(59,130,246,0.6)');
+      drawSparkline(ulCanvas, [0, 0], ulMax, 'rgba(34,197,94,0.6)');
+      return;
+    }
+
+    setOverlay(customerId, 'dl', '');
+    setOverlay(customerId, 'ul', '');
+
+    const dl = Math.max(0, Number(dlMbps || 0) || 0);
+    const ul = Math.max(0, Number(ulMbps || 0) || 0);
+    st.dl.push(dl);
+    st.ul.push(ul);
+    if (st.dl.length > 22) st.dl = st.dl.slice(-22);
+    if (st.ul.length > 22) st.ul = st.ul.slice(-22);
+
+    drawSparkline(dlCanvas, st.dl, dlMax, '#3b82f6');
+    drawSparkline(ulCanvas, st.ul, ulMax, '#22c55e');
+  }
+
+  async function refreshCustomerTrafficPopup(customerId) {
+    try {
+      const r = await fetch(`/admin/api/customers/${customerId}/pppoe-traffic`, { cache: 'no-store' });
+      const data = await r.json();
+      if (!data || !data.ok) {
+        updatePopupTraffic(customerId, 0, 0, '-');
+        return;
+      }
+      if (!data.available) {
+        updatePopupTraffic(customerId, 0, 0, 'N/A');
+        return;
+      }
+      if (!data.online) {
+        updatePopupTraffic(customerId, 0, 0, 'Offline');
+        return;
+      }
+      if (data.warmup) {
+        updatePopupTraffic(customerId, 0, 0, 'Mengukur');
+        return;
+      }
+
+      const rx = Number(data.rxMbps || 0);
+      const tx = Number(data.txMbps || 0);
+      updatePopupTraffic(customerId, tx, rx, '');
+    } catch {
+      updatePopupTraffic(customerId, 0, 0, '-');
+    }
+  }
+
+  function startCustomerTrafficPopup(customerId) {
+    stopCustomerTrafficPopup(customerId);
+    refreshCustomerTrafficPopup(customerId);
+    customerTrafficIntervals[customerId] = setInterval(() => refreshCustomerTrafficPopup(customerId), 3000);
+  }
+
+  function stopCustomerTrafficPopup(customerId) {
+    const t = customerTrafficIntervals[customerId];
+    if (t) clearInterval(t);
+    delete customerTrafficIntervals[customerId];
+  }
+
+  function normalizePhone(phone) {
+    const raw = String(phone || '').trim();
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('62')) return digits;
+    if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+    if (digits.length >= 9) return `62${digits}`;
+    return digits;
+  }
+
+  function buildWaLink(phone, name) {
+    const to = normalizePhone(phone);
+    const msg = `Halo ${String(name || '').trim()}`;
+    if (!to) return 'javascript:void(0)';
+    return `https://wa.me/${to}?text=${encodeURIComponent(msg)}`;
+  }
+
+  function buildMapsLink(lat, lng) {
+    const la = Number(lat);
+    const lo = Number(lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return 'javascript:void(0)';
+    return `https://www.google.com/maps?q=${encodeURIComponent(String(la))},${encodeURIComponent(String(lo))}`;
+  }
+</script>
+</body>
+</html>
