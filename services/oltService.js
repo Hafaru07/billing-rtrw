@@ -1,6 +1,5 @@
 const snmp = require('net-snmp');
 const net = require('net');
-const Database = require('better-sqlite3');
 const path = require('path');
 const winston = require('winston');
 const axios = require('axios');
@@ -25,8 +24,16 @@ const logger = winston.createLogger({
   ]
 });
 
-const dbPath = path.join(__dirname, '../database/billing.db');
-const db = new Database(dbPath);
+// Memakai koneksi database BERSAMA dari config/database.js.
+//
+// Sebelumnya berkas ini membuka koneksi sendiri (`new Database(dbPath)`).
+// Akibatnya fungsi SQLite buatan sendiri — NOW_LOCAL() — tidak dikenal pada
+// koneksi ini, sehingga INSERT ke tabel `olts` (kolom created_at memakai
+// DEFAULT (NOW_LOCAL())) gagal dengan "unknown function: NOW_LOCAL()".
+//
+// Memakai satu koneksi juga menghindari bentrok kunci tulis antar-koneksi
+// pada berkas SQLite yang sama, dan menjamin pragma (WAL, foreign_keys) seragam.
+const db = require('../config/database');
 
 /**
  * Profil SNMP per brand OLT
