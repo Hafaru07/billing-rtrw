@@ -242,7 +242,35 @@ function resolvePortalBaseUrl() {
  *
  * @param {string} trigger label untuk log ('jadwal-07:00' | 'resume' | 'startup')
  */
-async function runBillingReminders(trigger = 'manual') {
+/**
+ * @typedef {Object} ReminderOptions
+ * @property {boolean} [dryRun]        Hitung target saja — TIDAK mengirim WhatsApp
+ *                                     dan TIDAK menulis penanda terkirim.
+ * @property {string}  [simulateDate]  'YYYY-MM-DD'. Berpura-pura hari ini tanggal
+ *                                     tersebut, untuk menguji logika H-1 tanpa
+ *                                     menunggu atau mengubah data pelanggan.
+ * @property {boolean} [ignoreSettled] Abaikan penanda "sudah dikirim hari ini",
+ *                                     supaya uji bisa diulang berkali-kali.
+ * @property {number}  [onlyCustomerId] Proses satu pelanggan saja.
+ * @property {string}  [overridePhone] Kirim ke nomor ini, bukan nomor pelanggan.
+ *                                     Dipakai agar pesan uji masuk ke HP admin.
+ * @property {boolean} [noDelay]       Lewati jeda acak 30-120 detik (untuk uji).
+ */
+
+/**
+ * Kirim pengingat tagihan.
+ *
+ * Selain dipakai cron harian, fungsi ini juga melayani mode UJI dari panel admin
+ * (lihat ReminderOptions). Mode uji dibuat supaya fitur ini bisa diperiksa di
+ * server produksi tanpa: menunggu jam 07:00, mengubah tanggal isolir pelanggan,
+ * atau mengirim pesan nyata ke pelanggan.
+ *
+ * @param {string} trigger label untuk log
+ * @param {ReminderOptions} [opts]
+ */
+async function runBillingReminders(trigger = 'manual', opts = {}) {
+  const dryRun = !!opts.dryRun;
+
   if (reminderRunning) {
     logger.info(`[CRON] Pengingat (${trigger}) dilewati — proses lain masih berjalan.`);
     return { skipped: true, reason: 'running' };
@@ -251,18 +279,34 @@ async function runBillingReminders(trigger = 'manual') {
   const enabled = getSetting('whatsapp_auto_billing_enabled', false);
   const waEnabled = getSetting('whatsapp_enabled', false);
   const billingEnabled = getSetting('whatsapp_billing_to_customer_enabled', true);
-  if (!enabled || !waEnabled || !billingEnabled) return { skipped: true, reason: 'disabled' };
 
-  const dateKey = localDateKey();
-  const today = getCurrentDateInTimezone();
+  // Simulasi tetap boleh jalan walau fitur pengingat sedang dimatikan —
+  // justru berguna untuk memastikan semuanya siap sebelum diaktifkan.
+  if (!dryRun && (!enabled || !waEnabled || !billingEnabled)) {
+    return { skipped: true, reason: 'disabled' };
+  }
+
+  // Tanggal acuan: normalnya hari ini, bisa dipura-purakan saat menguji.
+  let today = getCurrentDateInTimezone();
+  let dateKey = localDateKey();
+  if (opts.simulateDate && /^\d{4}-\d{2}-\d{2}$/.test(opts.simulateDate)) {
+    const [y, m, d] = opts.simulateDate.split('-').map(Number);
+    const sim = new Date(y, m - 1, d);
+    if (!isNaN(sim.getTime())) {
+      today = sim;
+      dateKey = opts.simulateDate;
+    }
+  }
 
   // Susun daftar target dulu (murah) sebelum menyentuh WhatsApp.
   const customers = customerSvc.getAllCustomers();
-  const settled = getSettledCustomerIds(dateKey);
+  const settled = opts.ignoreSettled ? new Set() : getSettledCustomerIds(dateKey);
 
   const targetCustomers = [];
   const seenPhones = new Set();
   for (const c of customers) {
+    if (opts.onlyCustomerId && Number(c.id) !== Number(opts.onlyCustomerId)) continue;
+
     const phone = c.phone ? String(c.phone).trim() : '';
     if (!phone || phone.length < 9) continue;
     let digits = phone.replace(/\D/g, '');
@@ -279,6 +323,26 @@ async function runBillingReminders(trigger = 'manual') {
     seenPhones.add(digits);
     if (settled.has(Number(c.id))) continue; // sudah diproses hari ini
     targetCustomers.push(c);
+  }
+
+  // ── MODE SIMULASI: laporkan siapa saja yang akan dikirimi, lalu berhenti ──
+  if (dryRun) {
+    const preview = targetCustomers.map(c => {
+      const unpaid = billingSvc.getUnpaidInvoicesByCustomerId(c.id);
+      const total = unpaid.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      return {
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        package_name: c.package_name || '-',
+        isolate_day: Number(c.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10),
+        unpaid_count: unpaid.length,
+        total_tagihan: total,
+        periode: unpaid.map(i => `${i.period_month}/${i.period_year}`).join(', ')
+      };
+    });
+    logger.info(`[CRON] SIMULASI (${trigger}) tanggal ${dateKey}: ${preview.length} pelanggan akan dikirimi. Tidak ada pesan yang dikirim.`);
+    return { dryRun: true, dateKey, count: preview.length, targets: preview };
   }
 
   if (targetCustomers.length === 0) {
@@ -359,12 +423,19 @@ async function runBillingReminders(trigger = 'manual') {
   try {
     for (let i = 0; i < targetCustomers.length; i++) {
       const c = targetCustomers[i];
+      // Saat menguji, pesan diarahkan ke nomor admin agar pelanggan asli
+      // tidak menerima apa pun. Isi pesannya tetap memakai data pelanggan
+      // sungguhan supaya hasil uji mencerminkan kondisi nyata.
+      const targetPhone = opts.overridePhone || c.phone;
       let attemptCount = 0;
 
       while (attemptCount < REMINDER_MAX_ATTEMPTS) {
         try {
-          // Jeda acak 30-120 detik (terkunci, tidak mengikuti setting admin)
-          await new Promise(r => setTimeout(r, getReminderDelay()));
+          // Jeda acak 30-120 detik (terkunci, tidak mengikuti setting admin).
+          // Saat menguji dari panel admin, jeda dilewati agar hasil langsung terlihat.
+          if (!opts.noDelay) {
+            await new Promise(r => setTimeout(r, getReminderDelay()));
+          }
 
           const unpaidInvoices = billingSvc.getUnpaidInvoicesByCustomerId(c.id);
           const totalTagihan = unpaidInvoices.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
@@ -396,7 +467,7 @@ async function runBillingReminders(trigger = 'manual') {
                     .replace(/{{qris_qr}}/gi, '');
 
                   caption = addMessageVariation(caption, i);
-                  ok = await sendWAImage(c.phone, jpg, caption);
+                  ok = await sendWAImage(targetPhone, jpg, caption);
                 }
               }
             } catch (e) {
@@ -416,18 +487,20 @@ async function runBillingReminders(trigger = 'manual') {
               .replace(/{{link}}/gi, loginLink);
 
             formattedMsg = addMessageVariation(formattedMsg, i);
-            ok = await sendWA(c.phone, formattedMsg);
+            ok = await sendWA(targetPhone, formattedMsg);
           }
 
           if (!ok) throw new Error('Gagal kirim pesan');
 
           // Tandai SEGERA setelah sukses — kalau proses mati sedetik kemudian,
           // pelanggan ini tidak akan dikirimi ulang.
-          markReminder(c.id, dateKey, 'sent', c.phone, '');
+          // Kiriman uji ke nomor admin tidak ditandai, supaya jadwal asli
+          // pagi harinya tetap mengirim ke pelanggan yang bersangkutan.
+          if (!opts.overridePhone) markReminder(c.id, dateKey, 'sent', c.phone, '');
           sent++;
           batchCount++;
 
-          if (batchCount >= batchSize && i < targetCustomers.length - 1) {
+          if (!opts.noDelay && batchCount >= batchSize && i < targetCustomers.length - 1) {
             logger.info(`[CRON] Selesai batch ${batchSize} pesan. Jeda ${Math.floor(batchPauseMs / 1000)} detik...`);
             await new Promise(r => setTimeout(r, batchPauseMs));
             batchCount = 0;
@@ -439,7 +512,7 @@ async function runBillingReminders(trigger = 'manual') {
 
           if (isPermanentError(errorMsg)) {
             logger.warn(`[CRON] SKIP permanen untuk ${c.phone}: ${errorMsg}`);
-            markReminder(c.id, dateKey, 'failed', c.phone, `permanen: ${errorMsg}`);
+            if (!opts.overridePhone) markReminder(c.id, dateKey, 'failed', c.phone, `permanen: ${errorMsg}`);
             failed++;
             break;
           }
@@ -447,7 +520,7 @@ async function runBillingReminders(trigger = 'manual') {
           logger.error(`[CRON] Gagal kirim ke ${c.phone} (percobaan ${attemptCount}/${REMINDER_MAX_ATTEMPTS}): ${errorMsg}`);
 
           if (attemptCount >= REMINDER_MAX_ATTEMPTS) {
-            markReminder(c.id, dateKey, 'failed', c.phone, errorMsg);
+            if (!opts.overridePhone) markReminder(c.id, dateKey, 'failed', c.phone, errorMsg);
             failed++;
           } else {
             await new Promise(r => setTimeout(r, getBackoffDelay(attemptCount)));

@@ -5913,6 +5913,78 @@ router.post('/whatsapp/auto-billing', requireAdminSession, express.urlencoded({ 
   res.redirect('/admin/whatsapp/broadcast');
 });
 
+// ─── UJI PENGINGAT TAGIHAN ─────────────────────────────────────────────────
+// Cron pengingat hanya jalan pukul 07:00 dan hanya menyasar pelanggan yang
+// besok jatuh tempo. Di server produksi mustahil menunggu atau mengubah
+// tanggal isolir pelanggan asli hanya untuk menguji. Dua endpoint di bawah
+// memungkinkan pengujian kapan saja tanpa menyentuh data pelanggan.
+
+/**
+ * SIMULASI — hitung siapa saja yang AKAN dikirimi pada tanggal tertentu.
+ * Tidak mengirim WhatsApp dan tidak menulis penanda apa pun.
+ */
+router.get('/api/reminder/preview', requireAdminSession, restrictToAdmin, async (req, res) => {
+  try {
+    const { runBillingReminders } = require('../services/cronService');
+    const date = String(req.query.date || '').trim();
+    const result = await runBillingReminders('simulasi-admin', {
+      dryRun: true,
+      simulateDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined,
+      ignoreSettled: true
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    logger.error(`[UJI] Simulasi pengingat gagal: ${e.message}`);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * KIRIM UJI — kirim satu pesan pengingat sungguhan ke nomor yang ditentukan
+ * (biasanya nomor admin sendiri), memakai data tagihan pelanggan asli.
+ *
+ * Pelanggan yang bersangkutan TIDAK menerima apa pun, dan tidak ditandai
+ * sudah dikirimi — sehingga jadwal asli pagi harinya tetap berjalan normal.
+ */
+router.post('/api/reminder/test-send', requireAdminSession, restrictToAdmin, express.json(), async (req, res) => {
+  try {
+    const { runBillingReminders } = require('../services/cronService');
+    const body = req.body || {};
+
+    const phone = String(body.phone || '').replace(/\D/g, '');
+    if (phone.length < 9) throw new Error('Nomor WhatsApp tujuan uji tidak valid.');
+
+    const customerId = Number(body.customer_id) || 0;
+    if (!customerId) throw new Error('Pilih dulu pelanggan yang datanya dipakai untuk uji.');
+
+    const date = String(body.date || '').trim();
+
+    const result = await runBillingReminders('uji-kirim', {
+      simulateDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined,
+      onlyCustomerId: customerId,
+      overridePhone: phone,
+      ignoreSettled: true,
+      noDelay: true
+    });
+
+    if (result.skipped) {
+      const alasan = {
+        'disabled': 'Fitur pengingat/WhatsApp sedang dimatikan di Pengaturan.',
+        'wa-offline': 'Bot WhatsApp belum terhubung.',
+        'wa-load-error': 'Modul WhatsApp gagal dimuat.',
+        'no-target': 'Pelanggan ini tidak memenuhi syarat pada tanggal tersebut (bukan H-1 jatuh tempo, atau tidak punya tunggakan).',
+        'running': 'Proses pengingat lain sedang berjalan, coba lagi sebentar.'
+      }[result.reason] || result.reason;
+      return res.json({ ok: false, error: alasan, reason: result.reason });
+    }
+
+    res.json({ ok: true, sent: result.sent, failed: result.failed });
+  } catch (e) {
+    logger.error(`[UJI] Kirim uji pengingat gagal: ${e.message}`);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 router.get('/api/whatsapp/status', requireAdmin, async (req, res) => {
     try {
       const { whatsappStatus } = await import('../services/whatsappBot.mjs');

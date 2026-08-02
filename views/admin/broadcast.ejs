@@ -161,6 +161,69 @@
       </form>
     </div>
 
+    <!-- ═══ UJI PENGINGAT ═══ -->
+    <div class="card">
+      <div class="card-hd">
+        <h6><i class="bi bi-clipboard-check"></i> Uji Pengingat Tagihan</h6>
+      </div>
+      <div class="card-bd">
+        <div class="alert alert-i" style="margin-bottom:14px">
+          <i class="bi bi-info-circle"></i>
+          Pengingat asli berjalan tiap hari pukul <strong>07:00</strong> dan hanya menyasar pelanggan
+          yang <strong>besok</strong> jatuh tempo. Panel ini untuk mengujinya kapan saja
+          tanpa menunggu dan tanpa mengubah tanggal isolir pelanggan.
+        </div>
+
+        <div class="form-row" style="margin-bottom:12px">
+          <div class="fg">
+            <label class="fl">Simulasikan sebagai tanggal</label>
+            <input class="fc" type="date" id="test_date">
+            <div style="font-size:11px;color:var(--muted);margin-top:5px">
+              Kosongkan = hari ini. Isi H-1 dari tanggal isolir untuk melihat hasilnya.
+            </div>
+          </div>
+          <div class="fg">
+            <label class="fl">&nbsp;</label>
+            <button type="button" class="btn btn-g" style="width:100%" onclick="previewReminder()">
+              <i class="bi bi-search"></i> Lihat Siapa Saja yang Akan Dikirimi
+            </button>
+            <div style="font-size:11px;color:var(--muted);margin-top:5px">
+              Hanya simulasi — tidak ada pesan yang dikirim.
+            </div>
+          </div>
+        </div>
+
+        <div id="preview_result" style="display:none;margin-bottom:14px"></div>
+
+        <div style="border-top:1px dashed var(--border);padding-top:14px">
+          <div class="fw6" style="font-size:12px;margin-bottom:10px;color:var(--warning)">
+            <i class="bi bi-send-check"></i> Kirim Pesan Uji ke Nomor Sendiri
+          </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="fg">
+              <label class="fl">Pakai data tagihan pelanggan</label>
+              <select class="fs" id="test_customer">
+                <option value="">— Jalankan simulasi dulu —</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="fl">Kirim ke nomor WhatsApp</label>
+              <input class="fc" id="test_phone" placeholder="0812xxxxxxxx (nomor Anda sendiri)"
+                     value="<%= (settings.whatsapp_admin_numbers && settings.whatsapp_admin_numbers.length) ? settings.whatsapp_admin_numbers[0] : '' %>">
+            </div>
+          </div>
+          <button type="button" class="btn btn-w" onclick="sendTestReminder()">
+            <i class="bi bi-whatsapp"></i> Kirim Pesan Uji
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">
+            Pesan dikirim ke nomor di atas, <strong>bukan</strong> ke pelanggan.
+            Pelanggan juga tidak ditandai sudah dikirimi, jadi jadwal pagi tetap berjalan normal.
+          </div>
+          <div id="test_send_result" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -249,6 +312,95 @@ async function checkBroadcastStatus() {
 // Start polling
 setInterval(checkBroadcastStatus, 2000);
 checkBroadcastStatus();
+
+// ══════════════════════════════════════════════════════════════
+// UJI PENGINGAT TAGIHAN
+// ══════════════════════════════════════════════════════════════
+const rupiah = (n) => 'Rp ' + (Number(n) || 0).toLocaleString('id-ID');
+const esc = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+async function previewReminder() {
+  const box = document.getElementById('preview_result');
+  const date = document.getElementById('test_date').value;
+  box.style.display = 'block';
+  box.innerHTML = '<div class="alert alert-i"><i class="bi bi-hourglass-split"></i> Menghitung...</div>';
+
+  try {
+    const res = await fetch('/admin/api/reminder/preview' + (date ? '?date=' + encodeURIComponent(date) : ''));
+    const d = await res.json();
+    if (!d.ok) { box.innerHTML = `<div class="alert alert-d"><i class="bi bi-x-circle"></i> ${esc(d.error)}</div>`; return; }
+
+    const sel = document.getElementById('test_customer');
+
+    if (!d.count) {
+      box.innerHTML = `<div class="alert alert-w"><i class="bi bi-info-circle"></i>
+        Tidak ada pelanggan yang akan dikirimi pada <strong>${esc(d.dateKey)}</strong>.
+        <br><span style="font-size:11px">Syaratnya: punya tunggakan <em>dan</em> tanggal itu tepat H-1 sebelum tanggal isolirnya.</span>
+      </div>`;
+      sel.innerHTML = '<option value="">— tidak ada target —</option>';
+      return;
+    }
+
+    let html = `<div class="alert alert-s"><i class="bi bi-check-circle"></i>
+      <strong>${d.count} pelanggan</strong> akan dikirimi pengingat pada <strong>${esc(d.dateKey)}</strong>.
+      Tidak ada pesan yang dikirim pada simulasi ini.</div>
+      <div class="tbl-wrap" style="max-height:280px;overflow:auto">
+      <table class="dtbl"><thead><tr>
+        <th>Pelanggan</th><th>No. WA</th><th>Paket</th>
+        <th style="text-align:center">Tgl Isolir</th><th class="num">Tagihan</th><th>Periode</th>
+      </tr></thead><tbody>`;
+
+    d.targets.forEach(t => {
+      html += `<tr>
+        <td class="fw6">${esc(t.name)}</td>
+        <td>${esc(t.phone)}</td>
+        <td style="color:var(--muted)">${esc(t.package_name)}</td>
+        <td style="text-align:center">${t.isolate_day}</td>
+        <td class="num">${rupiah(t.total_tagihan)}</td>
+        <td style="font-size:11px;color:var(--muted)">${esc(t.periode)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+
+    // Isi pilihan pelanggan untuk kirim uji
+    sel.innerHTML = d.targets
+      .map(t => `<option value="${t.id}">${esc(t.name)} — ${rupiah(t.total_tagihan)}</option>`)
+      .join('');
+  } catch (e) {
+    box.innerHTML = `<div class="alert alert-d"><i class="bi bi-x-circle"></i> Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function sendTestReminder() {
+  const box = document.getElementById('test_send_result');
+  const customerId = document.getElementById('test_customer').value;
+  const phone = document.getElementById('test_phone').value.trim();
+  const date = document.getElementById('test_date').value;
+
+  if (!customerId) { box.innerHTML = '<div class="alert alert-w">Jalankan simulasi dulu, lalu pilih pelanggannya.</div>'; return; }
+  if (!phone) { box.innerHTML = '<div class="alert alert-w">Isi nomor WhatsApp tujuan uji.</div>'; return; }
+  if (!confirm(`Kirim satu pesan pengingat uji ke ${phone}?\n\nPelanggan yang dipilih TIDAK menerima apa pun.`)) return;
+
+  box.innerHTML = '<div class="alert alert-i"><i class="bi bi-hourglass-split"></i> Mengirim...</div>';
+  try {
+    const res = await fetch('/admin/api/reminder/test-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ customer_id: customerId, phone, date })
+    });
+    const d = await res.json();
+    box.innerHTML = d.ok
+      ? `<div class="alert alert-s"><i class="bi bi-check-circle"></i>
+           Terkirim ke <strong>${esc(phone)}</strong>. Cek WhatsApp Anda —
+           kalau QRIS aktif, pesannya berupa gambar QR dengan nominal tertanam.</div>`
+      : `<div class="alert alert-d"><i class="bi bi-x-circle"></i> ${esc(d.error)}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="alert alert-d"><i class="bi bi-x-circle"></i> Error: ${esc(e.message)}</div>`;
+  }
+}
 </script>
 </body>
 </html>
