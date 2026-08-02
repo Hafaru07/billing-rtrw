@@ -35,6 +35,7 @@ router.use((req, res, next) => {
 });
 
 const { loginRateLimiter } = require('../middleware/rateLimiter');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 router.get('/login', (req, res) => {
   if (req.session && req.session.isCollector) return res.redirect('/collector');
@@ -353,7 +354,7 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
           `✅ *PEMBAYARAN BERHASIL*\n\n` +
           `👤 *Pelanggan:* ${customer.name}\n` +
           `🧾 *Invoice:* #${inv.id}\n` +
-          `📅 *Periode:* ${inv.period_month}/${inv.period_year}\n` +
+          `📅 *Periode:* ${formatPeriod(inv.period_month, inv.period_year)}\n` +
           `💰 *Nominal Tagihan:* Rp ${Number(inv.amount || 0).toLocaleString('id-ID')}\n` +
           `🏷️ *Dibayar Via:* ${collectorLabel}\n\n` +
           `Terima kasih.`;

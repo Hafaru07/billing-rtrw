@@ -107,6 +107,7 @@ router.use((req, res, next) => {
 });
 
 const { loginRateLimiter } = require('../middleware/rateLimiter');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 router.get('/login', (req, res) => {
   if (req.session && req.session.isAgent) return res.redirect('/agent');
@@ -337,7 +338,7 @@ router.post('/pay-invoice', requireAgentSession, express.urlencoded({ extended: 
             `✅ *PEMBAYARAN BERHASIL*\n\n` +
             `👤 *Pelanggan:* ${customer.name}\n` +
             `🧾 *Invoice:* #${result.invoice.id}\n` +
-            `📅 *Periode:* ${result.invoice.period_month}/${result.invoice.period_year}\n` +
+            `📅 *Periode:* ${formatPeriod(result.invoice.period_month, result.invoice.period_year)}\n` +
             `💰 *Nominal Tagihan:* Rp ${Number(result.invoice.amount || 0).toLocaleString('id-ID')}\n` +
             `🏷️ *Dibayar Via:* Agent ${result.agent.name}\n\n` +
             `Terima kasih.`;
@@ -354,7 +355,7 @@ router.post('/pay-invoice', requireAgentSession, express.urlencoded({ extended: 
       invoice_id: result.invoice.id,
       customer_name: customer?.name || '',
       customer_phone: customer?.phone || '',
-      period: `${result.invoice.period_month}/${result.invoice.period_year}`,
+      period: formatPeriod(result.invoice.period_month, result.invoice.period_year),
       amount: Number(result.invoice.amount || 0),
       cost: Number(result.tx.cost || 0),
       fee: Number(result.tx.fee || 0),

@@ -80,7 +80,7 @@
               <label class="fl"><%= t('admin.broadcast.message', 'Isi Pesan WhatsApp') %></label>
               <textarea class="fc" name="message" id="messageBox" rows="8" required style="width: 100%;"></textarea>
               <div style="font-size: 11px; color: var(--muted); margin-top: 6px;">
-                <i class="bi bi-info-circle"></i> <%= t('admin.broadcast.variables', 'Variabel:') %> <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>, <b>{{link}}</b> (<%= t('admin.broadcast.portal_link', 'Link Portal') %>).
+                <i class="bi bi-info-circle"></i> <%= t('admin.broadcast.variables', 'Variabel:') %> <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>, <b>{{jatuhtempo}}</b>, <b>{{link}}</b> (<%= t('admin.broadcast.portal_link', 'Link Portal') %>).
                 <br>
                 <i class="bi bi-chat-text"></i> <%= t('admin.broadcast.formatting', 'Gunakan *Tebal*, _Miring_, atau ~Coret~ sesuai standar WhatsApp.') %>
               </div>
@@ -123,7 +123,7 @@
                 Jalankan pengingat tagihan otomatis (CRON)
               </label>
               <div style="font-size: 11px; color: var(--muted); margin-top: 6px;">
-                Sistem akan mengirim pengingat ke pelanggan yang punya tunggakan pada H-1 sebelum tanggal isolir (isolate_day).
+                Sistem mengirim pengingat <strong>dua kali</strong> ke pelanggan yang punya tunggakan: <strong>H-5</strong> (agar sempat menyiapkan dana) dan <strong>H-1</strong> sebelum tanggal isolir. H-4 sampai H-2 sengaja dilewati agar tidak terasa spam.
                 Untuk isolate_day tanggal 1, pengingat dikirim di hari terakhir bulan sebelumnya.
               </div>
               <div style="font-size: 11px; color: var(--muted); margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border, #334155); border-radius: 8px; line-height: 1.6;">
@@ -150,7 +150,7 @@
               <label class="fl">Isi Pesan WhatsApp</label>
               <textarea class="fc" name="message" rows="8" required style="width: 100%;"><%= autoBillingMsg %></textarea>
               <div style="font-size: 11px; color: var(--muted); margin-top: 6px;">
-                <i class="bi bi-info-circle"></i> Variabel: <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>, <b>{{link}}</b> (link login otomatis).
+                <i class="bi bi-info-circle"></i> Variabel: <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>, <b>{{jatuhtempo}}</b>, <b>{{link}}</b> (link login otomatis).<br><span style="color:var(--muted)">{{jatuhtempo}} = tanggal isolir pelanggan, mis. <b>10 Agustus 2026</b>.</span>
               </div>
             </div>
           </div>
@@ -169,8 +169,8 @@
       <div class="card-bd">
         <div class="alert alert-i" style="margin-bottom:14px">
           <i class="bi bi-info-circle"></i>
-          Pengingat asli berjalan tiap hari pukul <strong>07:00</strong> dan hanya menyasar pelanggan
-          yang <strong>besok</strong> jatuh tempo. Panel ini untuk mengujinya kapan saja
+          Pengingat asli berjalan tiap hari pukul <strong>07:00</strong> dan menyasar pelanggan
+          yang <strong>H-5</strong> atau <strong>H-1</strong> menuju jatuh tempo. Panel ini untuk mengujinya kapan saja
           tanpa menunggu dan tanpa mengubah tanggal isolir pelanggan.
         </div>
 
@@ -179,7 +179,7 @@
             <label class="fl">Simulasikan sebagai tanggal</label>
             <input class="fc" type="date" id="test_date">
             <div style="font-size:11px;color:var(--muted);margin-top:5px">
-              Kosongkan = hari ini. Isi H-1 dari tanggal isolir untuk melihat hasilnya.
+              Kosongkan = hari ini. Isi H-5 atau H-1 dari tanggal isolir untuk melihat hasilnya.
             </div>
           </div>
           <div class="fg">
@@ -344,12 +344,14 @@ async function previewReminder() {
     }
 
     let html = `<div class="alert alert-s"><i class="bi bi-check-circle"></i>
-      <strong>${d.count} pelanggan</strong> akan dikirimi pengingat pada <strong>${esc(d.dateKey)}</strong>.
+      <strong>${d.count} pelanggan</strong> akan dikirimi pengingat pada <strong>${esc(d.dateKey)}</strong>
+      &mdash; <strong>${d.h5 || 0}</strong> tahap H-5, <strong>${d.h1 || 0}</strong> tahap H-1.
       Tidak ada pesan yang dikirim pada simulasi ini.</div>
       <div class="tbl-wrap" style="max-height:280px;overflow:auto">
       <table class="dtbl"><thead><tr>
         <th>Pelanggan</th><th>No. WA</th><th>Paket</th>
-        <th style="text-align:center">Tgl Isolir</th><th class="num">Tagihan</th><th>Periode</th>
+        <th style="text-align:center">Tahap</th><th>Jatuh Tempo</th>
+        <th class="num">Tagihan</th><th>Periode</th>
       </tr></thead><tbody>`;
 
     d.targets.forEach(t => {
@@ -357,7 +359,10 @@ async function previewReminder() {
         <td class="fw6">${esc(t.name)}</td>
         <td>${esc(t.phone)}</td>
         <td style="color:var(--muted)">${esc(t.package_name)}</td>
-        <td style="text-align:center">${t.isolate_day}</td>
+        <td style="text-align:center">
+          <span class="badge ${t.stage === 5 ? 'bw' : 'bd'}">H-${t.stage}</span>
+        </td>
+        <td style="font-size:11px">${esc(t.jatuh_tempo)}</td>
         <td class="num">${rupiah(t.total_tagihan)}</td>
         <td style="font-size:11px;color:var(--muted)">${esc(t.periode)}</td>
       </tr>`;

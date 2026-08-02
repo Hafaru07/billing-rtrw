@@ -2369,7 +2369,7 @@ router.post('/public/payment/create/:invoiceId', async (req, res) => {
         info: null,
         kind: 'invoice',
         invoiceId: Number(inv.id),
-        periodText: `${inv.period_month}/${inv.period_year}`,
+        periodText: formatPeriod(inv.period_month, inv.period_year),
         customerName: inv.customer_name || '',
         amountUnique,
         uniqueCode,
@@ -2709,7 +2709,7 @@ router.get('/payment/create/:invoiceId', async (req, res) => {
         info: null,
         kind: 'invoice',
         invoiceId: Number(inv.id),
-        periodText: `${inv.period_month}/${inv.period_year}`,
+        periodText: formatPeriod(inv.period_month, inv.period_year),
         customerName: profile?.name || inv.customer_name || '',
         amountUnique,
         uniqueCode,
@@ -2863,7 +2863,7 @@ router.post('/payment/proof/:invoiceId', uploadProof.single('proof'), async (req
             `🧾 *KONFIRMASI PEMBAYARAN (QRIS STATIS)*\n\n` +
             `👤 *Nama:* ${who}\n` +
             `🧾 *Invoice:* INV-${inv.id}\n` +
-            `📅 *Periode:* ${inv.period_month}/${inv.period_year}\n` +
+            `📅 *Periode:* ${formatPeriod(inv.period_month, inv.period_year)}\n` +
             `💰 *Nominal:* Rp ${Number(amountUnique).toLocaleString('id-ID')} (kode ${uniqueCode})\n` +
             `📎 *Bukti:* ${proofUrl}\n`;
           await sendWA(adminWaDigits, msg);
@@ -2885,7 +2885,7 @@ router.post('/payment/proof/:invoiceId', uploadProof.single('proof'), async (req
       info: 'Bukti transfer berhasil diupload. Silakan kirim konfirmasi ke admin.',
       kind: 'invoice',
       invoiceId: Number(inv.id),
-      periodText: `${inv.period_month}/${inv.period_year}`,
+      periodText: formatPeriod(inv.period_month, inv.period_year),
       customerName: payload ? (inv.customer_name || '') : (profile?.name || inv.customer_name || ''),
       amountUnique,
       uniqueCode,
@@ -3291,7 +3291,7 @@ router.post('/payment/callback', express.json({
 
         const formattedMsg = template
           .replace(/{{nama}}/gi, customer.name || 'Pelanggan')
-          .replace(/{{periode}}/gi, `${checkInv.period_month}/${checkInv.period_year}`)
+          .replace(/{{periode}}/gi, formatPeriod(checkInv.period_month, checkInv.period_year))
           .replace(/{{total}}/gi, checkInv.amount.toLocaleString('id-ID'))
           .replace(/{{metode}}/gi, gateway || '-');
 
@@ -3316,6 +3316,7 @@ router.post('/payment/callback', express.json({
 // ─── PPOB & SALDO PELANGGAN ───────────────────────────────────────────────────
 
 const agentSvc = require('../services/agentService');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 function getCustomerBalance(customerId) {
   const row = db.prepare('SELECT balance FROM customers WHERE id = ?').get(customerId);

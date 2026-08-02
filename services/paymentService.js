@@ -6,6 +6,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { getSettingsWithCache } = require('../config/settingsManager');
 const { logger } = require('../config/logger');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 /**
  * Generate fallback email based on phone number
@@ -60,7 +61,7 @@ async function createTripayTransaction(invoice, customer, method = 'QRIS', appUr
   const itemName =
     String(opts.itemName || invoice.item_name || '').trim() ||
     (invoice.period_month && invoice.period_year
-      ? `Tagihan Internet Periode ${invoice.period_month}/${invoice.period_year}`
+      ? `Tagihan Internet Periode ${formatPeriod(invoice.period_month, invoice.period_year)}`
       : `Pembayaran #${invoice.id}`);
   const sku = String(opts.sku || invoice.sku || `ITEM-${invoice.id}`).trim() || `ITEM-${invoice.id}`;
   const callbackPath = String(opts.callbackPath || '/customer/payment/callback');
@@ -132,7 +133,7 @@ async function createMidtransTransaction(invoice, customer, method = 'snap', app
   const itemName =
     String(opts.itemName || invoice.item_name || '').trim() ||
     (invoice.period_month && invoice.period_year
-      ? `Tagihan Internet ${invoice.period_month}/${invoice.period_year}`
+      ? `Tagihan Internet ${formatPeriod(invoice.period_month, invoice.period_year)}`
       : `Pembayaran #${invoice.id}`);
   const sku = String(opts.sku || invoice.sku || `ITEM-${invoice.id}`).trim() || `ITEM-${invoice.id}`;
   const returnPath = String(opts.returnPath || '/customer/dashboard');
@@ -222,12 +223,12 @@ async function createXenditTransaction(invoice, customer, method = 'xendit', app
   const itemName =
     String(opts.itemName || invoice.item_name || '').trim() ||
     (invoice.period_month && invoice.period_year
-      ? `Internet ${invoice.period_month}/${invoice.period_year}`
+      ? `Internet ${formatPeriod(invoice.period_month, invoice.period_year)}`
       : `Pembayaran #${invoice.id}`);
   const description =
     String(opts.description || invoice.description || '').trim() ||
     (invoice.period_month && invoice.period_year
-      ? `Tagihan Internet Periode ${invoice.period_month}/${invoice.period_year}`
+      ? `Tagihan Internet Periode ${formatPeriod(invoice.period_month, invoice.period_year)}`
       : itemName);
   const returnPath = String(opts.returnPath || '/customer/dashboard');
 
@@ -314,7 +315,7 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
   const productDetails =
     String(opts.itemName || invoice.item_name || '').trim() ||
     (invoice.period_month && invoice.period_year
-      ? `Tagihan Internet ${invoice.period_month}/${invoice.period_year}`
+      ? `Tagihan Internet ${formatPeriod(invoice.period_month, invoice.period_year)}`
       : `Pembayaran #${invoice.id}`);
   const callbackPath = String(opts.callbackPath || '/customer/payment/callback');
   const returnPath = String(opts.returnPath || '/customer/dashboard');

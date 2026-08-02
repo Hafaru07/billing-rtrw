@@ -12,6 +12,7 @@ const { getSetting, getSettings, getNowLocal, getCurrentDateInTimezone } = requi
 const db = require('../config/database');
 const qrisSvc = require('./qrisService');
 const { pickQrisUniqueAmount } = require('../utils/qrisUnique');
+const { formatPeriod, formatPeriodList, formatDateLong } = require('../utils/periodFormat');
 
 // ─── KONFIGURASI TERKUNCI: PENGINGAT TAGIHAN OTOMATIS ──────────────────────
 // Nilai di bawah ini SENGAJA di-hardcode dan tidak dapat diubah dari panel
@@ -70,26 +71,70 @@ function daysInMonth(year, month1to12) {
 }
 
 /**
- * Tentukan apakah hari ini adalah H-1 dari tanggal isolir pelanggan.
+ * Hari-hari pengingat dikirim, dihitung mundur dari tanggal jatuh tempo.
  *
- * Dibuat tahan terhadap tanggal isolir yang beragam (karena tanggal pasang =
- * tanggal tagih), termasuk dua kasus yang sebelumnya tidak pernah terkirim:
- *  - isolate_day = 1  -> H-1 jatuh di hari TERAKHIR bulan sebelumnya.
- *  - isolate_day > jumlah hari bulan ini (mis. 31 di bulan Februari)
- *    -> jatuh tempo efektif digeser ke hari terakhir bulan tersebut.
+ * H-5 memberi pelanggan waktu menyiapkan dana, H-1 sebagai pengingat terakhir.
+ * H-4 sampai H-2 sengaja dilewati supaya tidak terasa seperti spam.
  */
-function isReminderDay(dueDay, today) {
+const REMINDER_DAYS_BEFORE = [5, 1];
+
+/**
+ * Cari tanggal jatuh tempo BERIKUTNYA untuk pelanggan.
+ *
+ * Tahan terhadap tanggal isolir yang beragam (karena tanggal pasang = tanggal
+ * tagih):
+ *  - isolate_day melebihi jumlah hari bulan ini (mis. 31 di Februari)
+ *    -> digeser ke hari terakhir bulan tersebut.
+ *  - bila jatuh tempo bulan ini sudah lewat, otomatis lompat ke bulan depan.
+ *    Ini yang membuat isolate_day = 1 bekerja: pada akhir Agustus, jatuh
+ *    temponya adalah 1 September, sehingga H-5 dan H-1 jatuh di akhir Agustus.
+ *
+ * @returns {Date|null} tengah malam pada tanggal jatuh tempo
+ */
+function resolveDueDate(dueDay, today) {
   const d = Number(dueDay);
-  if (!Number.isFinite(d) || d < 1 || d > 31) return false;
+  if (!Number.isFinite(d) || d < 1 || d > 31) return null;
 
-  const day = today.getDate();
-  const lastDay = daysInMonth(today.getFullYear(), today.getMonth() + 1);
+  const y = today.getFullYear();
+  const m = today.getMonth();                       // 0-11
+  const todayMid = new Date(y, m, today.getDate());
 
-  // Jatuh tempo tanggal 1 -> ingatkan di hari terakhir bulan ini (besok tanggal 1).
-  if (d === 1) return day === lastDay;
+  // Kandidat bulan ini
+  const lastThis = daysInMonth(y, m + 1);
+  const dueThis = new Date(y, m, Math.min(d, lastThis));
+  if (dueThis.getTime() >= todayMid.getTime()) return dueThis;
 
-  const effectiveDue = Math.min(d, lastDay);
-  return day === effectiveDue - 1;
+  // Sudah lewat -> pakai bulan berikutnya
+  const nextY = m === 11 ? y + 1 : y;
+  const nextM = m === 11 ? 0 : m + 1;
+  const lastNext = daysInMonth(nextY, nextM + 1);
+  return new Date(nextY, nextM, Math.min(d, lastNext));
+}
+
+/** Selisih hari penuh antara hari ini dan tanggal jatuh tempo. */
+function daysUntilDue(dueDate, today) {
+  const a = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const b = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/**
+ * Tahap pengingat untuk hari ini.
+ *
+ * @returns {{stage:number, dueDate:Date}|null} null bila hari ini bukan
+ *          H-5 maupun H-1, sehingga pelanggan tidak dikirimi apa pun.
+ */
+function getReminderStage(dueDay, today) {
+  const dueDate = resolveDueDate(dueDay, today);
+  if (!dueDate) return null;
+  const left = daysUntilDue(dueDate, today);
+  if (!REMINDER_DAYS_BEFORE.includes(left)) return null;
+  return { stage: left, dueDate };
+}
+
+/** Dipertahankan untuk pemanggil lama: cukup tahu perlu kirim atau tidak. */
+function isReminderDay(dueDay, today) {
+  return getReminderStage(dueDay, today) !== null;
 }
 
 // Helper: Exponential backoff untuk error handling
@@ -318,10 +363,15 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
     if (unpaidCount <= 0) continue;
 
     const dueDay = Number(c.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10) || 10;
-    if (!isReminderDay(dueDay, today)) continue;
+    const stageInfo = getReminderStage(dueDay, today);
+    if (!stageInfo) continue;   // bukan H-5 maupun H-1 -> tidak dikirimi
 
     seenPhones.add(digits);
     if (settled.has(Number(c.id))) continue; // sudah diproses hari ini
+
+    // Tempelkan info tahap & jatuh tempo agar tidak dihitung dua kali di bawah
+    c._reminderStage = stageInfo.stage;      // 5 atau 1
+    c._dueDate = stageInfo.dueDate;
     targetCustomers.push(c);
   }
 
@@ -336,13 +386,17 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
         phone: c.phone,
         package_name: c.package_name || '-',
         isolate_day: Number(c.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10),
+        stage: c._reminderStage,                        // 5 = H-5, 1 = H-1
+        jatuh_tempo: formatDateLong(c._dueDate),
         unpaid_count: unpaid.length,
         total_tagihan: total,
-        periode: unpaid.map(i => `${i.period_month}/${i.period_year}`).join(', ')
+        periode: formatPeriodList(unpaid)
       };
     });
-    logger.info(`[CRON] SIMULASI (${trigger}) tanggal ${dateKey}: ${preview.length} pelanggan akan dikirimi. Tidak ada pesan yang dikirim.`);
-    return { dryRun: true, dateKey, count: preview.length, targets: preview };
+    const h5 = preview.filter(p => p.stage === 5).length;
+    const h1 = preview.filter(p => p.stage === 1).length;
+    logger.info(`[CRON] SIMULASI (${trigger}) tanggal ${dateKey}: ${preview.length} pelanggan (H-5: ${h5}, H-1: ${h1}). Tidak ada pesan yang dikirim.`);
+    return { dryRun: true, dateKey, count: preview.length, h5, h1, targets: preview };
   }
 
   if (targetCustomers.length === 0) {
@@ -427,6 +481,8 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
       // tidak menerima apa pun. Isi pesannya tetap memakai data pelanggan
       // sungguhan supaya hasil uji mencerminkan kondisi nyata.
       const targetPhone = opts.overridePhone || c.phone;
+      // Tanggal jatuh tempo untuk variabel {{jatuhtempo}} pada template pesan
+      const jatuhTempo = formatDateLong(c._dueDate);
       let attemptCount = 0;
 
       while (attemptCount < REMINDER_MAX_ATTEMPTS) {
@@ -439,7 +495,7 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
 
           const unpaidInvoices = billingSvc.getUnpaidInvoicesByCustomerId(c.id);
           const totalTagihan = unpaidInvoices.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
-          const rincianBulan = unpaidInvoices.map(inv => `${inv.period_month}/${inv.period_year}`).join(', ');
+          const rincianBulan = formatPeriodList(unpaidInvoices);
 
           let ok = false;
 
@@ -457,13 +513,14 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
                 if (jpg) {
                   let caption = templateQris
                     .replace(/{{nama}}/gi, c.name || 'Pelanggan')
-                    .replace(/{{periode}}/gi, `${inv.period_month}/${inv.period_year}`)
+                    .replace(/{{periode}}/gi, formatPeriod(inv.period_month, inv.period_year))
                     .replace(/{{paket}}/gi, c.package_name || '-')
                     .replace(/{{qris_nominal}}/gi, Number(unique.amount).toLocaleString('id-ID'))
                     .replace(/{{qris_kode}}/gi, String(unique.code))
                     .replace(/{{tagihan}}/gi, totalTagihan.toLocaleString('id-ID'))
                     .replace(/{{rincian}}/gi, rincianBulan || '-')
                     .replace(/{{link}}/gi, loginLink)
+                    .replace(/{{jatuhtempo}}/gi, jatuhTempo)
                     .replace(/{{qris_qr}}/gi, '');
 
                   caption = addMessageVariation(caption, i);
@@ -484,7 +541,8 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
               .replace(/{{tagihan}}/gi, totalTagihan.toLocaleString('id-ID'))
               .replace(/{{rincian}}/gi, rincianBulan || '-')
               .replace(/{{paket}}/gi, c.package_name || '-')
-              .replace(/{{link}}/gi, loginLink);
+              .replace(/{{link}}/gi, loginLink)
+              .replace(/{{jatuhtempo}}/gi, jatuhTempo);
 
             formattedMsg = addMessageVariation(formattedMsg, i);
             ok = await sendWA(targetPhone, formattedMsg);

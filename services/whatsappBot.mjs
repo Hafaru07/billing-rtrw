@@ -1,4 +1,5 @@
 import { createRequire } from 'module';
+import { formatPeriod, formatPeriodList } from '../utils/periodFormat.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import pino from 'pino';
@@ -277,7 +278,7 @@ function formatCustomerInvoices(invoices, name) {
 
   const list = invoices.map(inv => {
     const status = inv.status === 'paid' ? '✅ LUNAS' : '❌ BELUM BAYAR';
-    return `📅 *Periode:* ${inv.period_month}/${inv.period_year}\n💰 *Total:* ${formatter.format(inv.amount)}\n📌 *Status:* ${status}\n🆔 *ID:* ${inv.id}`;
+    return `📅 *Periode:* ${formatPeriod(inv.period_month, inv.period_year)}\n💰 *Total:* ${formatter.format(inv.amount)}\n📌 *Status:* ${status}\n🆔 *ID:* ${inv.id}`;
   }).join('\n\n');
 
   return waWrap(title, list + `\n\n💡 _Gunakan ID Tagihan saat konfirmasi pembayaran_`);
@@ -1134,7 +1135,7 @@ export async function startWhatsAppBot() {
                     '✅ *PEMBAYARAN BERHASIL*',
                     `Invoice *#${targetInvId}* sudah *LUNAS*.\n` +
                       `👤 *Nama:* ${customerName}\n` +
-                      `📅 *Periode:* ${targetInv.period_month}/${targetInv.period_year}\n` +
+                      `📅 *Periode:* ${formatPeriod(targetInv.period_month, targetInv.period_year)}\n` +
                       `💰 *Total:* ${formatter.format(Number(targetInv.amount || 0))}\n\n` +
                       `🟢 Layanan internet Anda sudah aktif kembali.\n\n` +
                       `Terima kasih.`
@@ -1150,7 +1151,7 @@ export async function startWhatsAppBot() {
                     '✅ *PEMBAYARAN BERHASIL*',
                     `Invoice *#${targetInvId}* sudah *LUNAS*.\n` +
                       `👤 *Nama:* ${customerName}\n` +
-                      `📅 *Periode:* ${targetInv.period_month}/${targetInv.period_year}\n` +
+                      `📅 *Periode:* ${formatPeriod(targetInv.period_month, targetInv.period_year)}\n` +
                       `💰 *Total:* ${formatter.format(Number(targetInv.amount || 0))}\n\n` +
                       `⚠️ Masih ada ${unpaidCount} tagihan lain yang belum dibayar.\n\n` +
                       `Terima kasih.`
@@ -1167,7 +1168,7 @@ export async function startWhatsAppBot() {
                   '✅ *PEMBAYARAN BERHASIL*',
                   `Invoice *#${targetInvId}* sudah *LUNAS*.\n` +
                     `👤 *Nama:* ${customerName}\n` +
-                    `📅 *Periode:* ${targetInv.period_month}/${targetInv.period_year}\n` +
+                    `📅 *Periode:* ${formatPeriod(targetInv.period_month, targetInv.period_year)}\n` +
                     `💰 *Total:* ${formatter.format(Number(targetInv.amount || 0))}\n\n` +
                     `Terima kasih.`
                 )

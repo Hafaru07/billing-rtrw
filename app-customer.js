@@ -454,7 +454,7 @@ async function trySendWaPaymentSuccess(settings, invoiceId, methodLabel) {
     if (whatsappStatus.connection !== 'open') throw new Error('Bot WhatsApp belum terhubung');
     const defaultSuccess = `Yth. Pelanggan {{nama}},\n\n*PEMBAYARAN BERHASIL (LUNAS)*\n\n📅 *Periode:* {{periode}}\n💰 *Total Bayar:* Rp {{total}}\n💳 *Metode:* {{metode}}\n\nLayanan internet Anda aktif. Terima kasih atas kerja samanya.`;
     const template = db.getAppSetting('whatsapp_payment_success_message', defaultSuccess);
-    const periode = `${inv.period_month}/${inv.period_year}`;
+    const periode = formatPeriod(inv.period_month, inv.period_year);
     const total = Number(inv.amount || 0).toLocaleString('id-ID');
     const metode = String(methodLabel || '').trim() || 'QRIS';
     const msg = String(template || defaultSuccess)
@@ -1222,6 +1222,7 @@ if (getSetting('telegram_enabled', false)) {
 
 // Mulai cron jobs (generate tagihan otomatis, dll)
 const { startCronJobs } = require('./services/cronService');
+const { formatPeriod, formatPeriodList } = require('./utils/periodFormat');
 startCronJobs();
 
 // Mulai auto backup

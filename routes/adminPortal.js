@@ -1411,7 +1411,7 @@ router.post('/collector-payments/:id/approve', requireAdminSession, express.urle
       await sendPaymentSuccessWA(
         customer.phone,
         customer.name,
-        `${inv.period_month}/${inv.period_year}`,
+        formatPeriod(inv.period_month, inv.period_year),
         Number(inv.amount || 0).toLocaleString('id-ID'),
         collectorLabel
       );
@@ -2866,7 +2866,7 @@ router.post('/billing/pay-bulk', requireAdminSession, express.urlencoded({ exten
       if (customer && customer.phone) {
         const total = paidInvoices.reduce((a, b) => a + Number(b.amount || 0), 0);
         const periods = paidInvoices
-          .map(x => `${x.period_month}/${x.period_year}`)
+          .map(x => formatPeriod(x.period_month, x.period_year))
           .slice(0, 10)
           .join(', ') + (paidInvoices.length > 10 ? `, +${paidInvoices.length - 10} lainnya` : '');
         await sendPaymentSuccessWA(
@@ -2925,7 +2925,7 @@ router.post('/billing/:id/pay', requireAdminSession, express.urlencoded({ extend
       await sendPaymentSuccessWA(
         customer.phone,
         customer.name,
-        `${inv.period_month}/${inv.period_year}`,
+        formatPeriod(inv.period_month, inv.period_year),
         Number(inv.amount || 0).toLocaleString('id-ID'),
         paidBy
       );
@@ -3185,7 +3185,7 @@ router.post('/billing/:id/whatsapp', requireAdminSession, async (req, res) => {
     // Hitung Tagihan
     const unpaidInvoices = billingSvc.getUnpaidInvoicesByCustomerId(customer.id);
     const totalTagihan = unpaidInvoices.reduce((sum, i) => sum + i.amount, 0);
-    const rincianBulan = unpaidInvoices.map(i => `${i.period_month}/${i.period_year}`).join(', ');
+    const rincianBulan = formatPeriodList(unpaidInvoices);
     
     // Generate Link Login
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
@@ -3211,7 +3211,7 @@ router.post('/billing/:id/whatsapp', requireAdminSession, async (req, res) => {
     const qrisJpgCaption = isQrisCase
       ? templateQris
           .replace(/{{nama}}/gi, customer.name || 'Pelanggan')
-          .replace(/{{periode}}/gi, `${inv.period_month}/${inv.period_year}`)
+          .replace(/{{periode}}/gi, formatPeriod(inv.period_month, inv.period_year))
           .replace(/{{paket}}/gi, inv.package_name || '-')
           .replace(/{{qris_nominal}}/gi, Number(qrisAmountUnique).toLocaleString('id-ID'))
           .replace(/{{qris_kode}}/gi, String(qrisCode))
@@ -3221,7 +3221,7 @@ router.post('/billing/:id/whatsapp', requireAdminSession, async (req, res) => {
     const formattedMsg = isQrisCase
       ? templateQris
           .replace(/{{nama}}/gi, customer.name || 'Pelanggan')
-          .replace(/{{periode}}/gi, `${inv.period_month}/${inv.period_year}`)
+          .replace(/{{periode}}/gi, formatPeriod(inv.period_month, inv.period_year))
           .replace(/{{paket}}/gi, inv.package_name || '-')
           .replace(/{{qris_nominal}}/gi, Number(qrisAmountUnique).toLocaleString('id-ID'))
           .replace(/{{qris_kode}}/gi, String(qrisCode))
@@ -5819,7 +5819,7 @@ router.post('/whatsapp/broadcast', requireAdminSession, express.urlencoded({ ext
             // Hitung Tagihan
             const unpaidInvoices = billingSvc.getUnpaidInvoicesByCustomerId(cust.id);
             const totalTagihan = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
-            const rincianBulan = unpaidInvoices.map(inv => `${inv.period_month}/${inv.period_year}`).join(', ');
+            const rincianBulan = formatPeriodList(unpaidInvoices);
             
             // Generate Link Login
             const protocol = req.protocol;
@@ -6643,6 +6643,7 @@ router.use('/acs', acsPortal);
 router.use('/finance', require('./financePortal'));
 // ─── ONU PROVISION ─────────────────────────────────────────────────────────
 const onuProvisionSvc = require('../services/onuProvisionService');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 router.get('/onu-provision', requireAdminSession, restrictToAdmin, (req, res) => {
   const oltConfig = {
