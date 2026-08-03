@@ -17,6 +17,8 @@ const odpSvc = require('../services/odpService');
 const { pickQrisUniqueAmount, qrisRangeFullMessage } = require('../utils/qrisUnique');
 const serverSvc = require('../services/serverService');
 const poleSvc = require('../services/poleService');
+const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
+const waQueue = require('../services/waNotifyQueue');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -2860,26 +2862,46 @@ router.post('/billing/pay-bulk', requireAdminSession, express.urlencoded({ exten
       }
     }
 
+    // ── Notifikasi WhatsApp: ANTREKAN, jangan kirim beruntun ──
+    //
+    // Mengirim puluhan pesan sekaligus tanpa jeda adalah pola yang paling
+    // gampang dianggap spam oleh Meta dan berisiko memblokir akun WhatsApp.
+    // Pesan dimasukkan ke antrean latar belakang berjeda acak 30-90 detik.
+    //
+    // Pengirimannya sengaja TIDAK di-await: tagihan sudah tersimpan di
+    // database, jadi admin tidak perlu menunggu notifikasi selesai (untuk 20
+    // pelanggan bisa memakan 20 menit — permintaan HTTP pasti timeout).
+    let queued = 0;
     for (const [customerId, paidInvoices] of paidByCustomer.entries()) {
       if (!paidInvoices || paidInvoices.length === 0) continue;
       const customer = customerSvc.getCustomerById(customerId);
-      if (customer && customer.phone) {
-        const total = paidInvoices.reduce((a, b) => a + Number(b.amount || 0), 0);
-        const periods = paidInvoices
-          .map(x => formatPeriod(x.period_month, x.period_year))
-          .slice(0, 10)
-          .join(', ') + (paidInvoices.length > 10 ? `, +${paidInvoices.length - 10} lainnya` : '');
-        await sendPaymentSuccessWA(
-          customer.phone,
-          customer.name,
-          periods,
-          Number(total || 0).toLocaleString('id-ID'),
-          paidBy
-        );
-      }
+      if (!customer || !customer.phone) continue;
+
+      const total = paidInvoices.reduce((a, b) => a + Number(b.amount || 0), 0);
+      const periods = paidInvoices
+        .map(x => formatPeriod(x.period_month, x.period_year))
+        .slice(0, 10)
+        .join(', ') + (paidInvoices.length > 10 ? `, +${paidInvoices.length - 10} lainnya` : '');
+
+      // Nilai disalin ke variabel lokal agar tidak berubah saat antrean jalan
+      const phone = customer.phone;
+      const name = customer.name;
+      const totalText = Number(total || 0).toLocaleString('id-ID');
+
+      waQueue.enqueue(`lunas: ${name}`, () =>
+        sendPaymentSuccessWA(phone, name, periods, totalText, paidBy)
+      );
+      queued++;
     }
 
-    req.session._msg = { type: 'success', text: `${processed} tagihan berhasil diproses.` };
+    let msg = `${processed} tagihan berhasil diproses.`;
+    if (queued === 1) {
+      msg += ' Notifikasi WhatsApp sedang dikirim.';
+    } else if (queued > 1) {
+      const menit = waQueue.estimateMinutes(queued);
+      msg += ` ${queued} notifikasi WhatsApp dikirim bertahap dengan jeda acak 30-90 detik (perkiraan selesai ~${menit} menit) agar akun tidak terdeteksi spam.`;
+    }
+    req.session._msg = { type: 'success', text: msg };
   } catch (e) {
     req.session._msg = { type: 'error', text: 'Gagal bayar massal: ' + e.message };
   }
@@ -6643,7 +6665,6 @@ router.use('/acs', acsPortal);
 router.use('/finance', require('./financePortal'));
 // ─── ONU PROVISION ─────────────────────────────────────────────────────────
 const onuProvisionSvc = require('../services/onuProvisionService');
-const { formatPeriod, formatPeriodList } = require('../utils/periodFormat');
 
 router.get('/onu-provision', requireAdminSession, restrictToAdmin, (req, res) => {
   const oltConfig = {

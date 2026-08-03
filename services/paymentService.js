@@ -304,9 +304,12 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     throw new Error('Duitku Merchant Code atau API Key belum diatur.');
   }
 
-  const baseUrl = isLive 
+  // Host sandbox Duitku adalah sandbox.duitku.com — BUKAN passport-sandbox.
+  // Penulisan yang keliru membuat DNS gagal (ENOTFOUND), sehingga pembayaran
+  // selalu berakhir "gagal memuat" walau merchant code & API key sudah benar.
+  const baseUrl = isLive
     ? 'https://passport.duitku.com/webapi/api/merchant/v2/inquiry'
-    : 'https://passport-sandbox.duitku.com/webapi/api/merchant/v2/inquiry';
+    : 'https://sandbox.duitku.com/webapi/api/merchant/v2/inquiry';
 
   const prefix = String(opts.orderPrefix || 'INV').toUpperCase();
   const orderId = `${prefix}-${invoice.id}-${Date.now()}`;
@@ -351,7 +354,11 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
   payload.paymentMethod = methodMap[methodKey] || 'DQ';
 
   try {
-    const res = await axios.post(baseUrl, payload);
+    const res = await axios.post(baseUrl, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 20000   // jangan menggantung bila Duitku lambat merespons
+    });
+
     if (res.data && res.data.paymentUrl) {
       return {
         success: true,
@@ -361,10 +368,24 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
         payload: res.data
       };
     }
-    throw new Error(res.data.statusMessage || 'Gagal mendapatkan payment URL dari Duitku');
+    throw new Error(res.data?.statusMessage || 'Gagal mendapatkan payment URL dari Duitku');
   } catch (error) {
-    const msg = error.response ? JSON.stringify(error.response.data) : error.message;
-    logger.error('[Duitku] Error:', msg);
+    // Terjemahkan penyebab teknis menjadi keterangan yang bisa ditindaklanjuti.
+    let msg;
+    if (error.response) {
+      const d = error.response.data;
+      msg = `HTTP ${error.response.status} — ${typeof d === 'string' ? d : JSON.stringify(d)}`;
+    } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+      msg = `Alamat ${new URL(baseUrl).hostname} tidak dapat dijangkau. Periksa koneksi internet server / DNS.`;
+    } else if (error.code === 'ECONNABORTED') {
+      msg = 'Duitku tidak merespons dalam 20 detik (timeout).';
+    } else if (error.code === 'ECONNREFUSED') {
+      msg = 'Koneksi ke Duitku ditolak.';
+    } else {
+      msg = error.message;
+    }
+
+    logger.error(`[Duitku] Gagal membuat transaksi (mode=${isLive ? 'live' : 'sandbox'}, url=${baseUrl}, order=${orderId}): ${msg}`);
     throw new Error('Duitku Error: ' + msg);
   }
 }
