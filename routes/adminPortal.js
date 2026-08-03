@@ -3593,6 +3593,34 @@ router.post('/sidebar-settings', requireAdminSession, restrictToAdmin, express.u
   res.redirect('/admin/sidebar-settings');
 });
 
+/**
+ * Diagnostik Duitku: kanal pembayaran apa saja yang AKTIF untuk suatu nominal.
+ *
+ * Duitku hanya mengaktifkan kanal yang sudah disetujui, dan tiap kanal punya
+ * batas nominal minimum sendiri. Tanpa cara memeriksa, satu-satunya gejala
+ * adalah pembelian gagal dengan pesan "Payment channel not available" yang
+ * tidak menyebut kanal mana yang boleh dipakai.
+ *
+ * Contoh: /admin/settings/duitku/channels?amount=2000
+ */
+router.get('/settings/duitku/channels', requireAdminSession, requireSidebarMenuAccess('settings'), async (req, res) => {
+  const amount = Math.max(1, Math.floor(Number(req.query.amount) || 10000));
+  try {
+    const channels = await require('../services/paymentService').getDuitkuPaymentMethods(amount);
+    res.json({
+      success: true,
+      amount,
+      total: channels.length,
+      channels,
+      hint: channels.length
+        ? 'Hanya kanal di daftar ini yang bisa dipakai untuk nominal tersebut.'
+        : 'Tidak ada kanal aktif. Nominal kemungkinan di bawah batas minimum, atau belum ada kanal yang disetujui Duitku.'
+    });
+  } catch (e) {
+    res.status(502).json({ success: false, amount, error: e.message });
+  }
+});
+
 router.get('/settings', requireAdminSession, requireSidebarMenuAccess('settings'), (req, res) => {
   const settings = getSettings();
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;

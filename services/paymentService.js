@@ -292,6 +292,89 @@ async function createXenditTransaction(invoice, customer, method = 'xendit', app
 }
 
 /**
+ * Host API Duitku. Sandbox memakai sandbox.duitku.com — BUKAN passport-sandbox.
+ * Penulisan yang keliru membuat DNS gagal (ENOTFOUND), sehingga pembayaran
+ * selalu berakhir "gagal memuat" walau merchant code & API key sudah benar.
+ */
+function duitkuHost(isLive) {
+  return isLive ? 'https://passport.duitku.com' : 'https://sandbox.duitku.com';
+}
+
+/**
+ * Daftar kanal pembayaran yang BENAR-BENAR aktif di akun merchant untuk
+ * nominal tertentu.
+ *
+ * Ini penting karena Duitku hanya mengaktifkan kanal yang sudah disetujui, dan
+ * tiap kanal punya batas nominal minimum sendiri. Mengirim kode kanal yang
+ * tidak aktif membuat Duitku membalas HTTP 404 "Payment channel not available"
+ * — pesan yang tidak menjelaskan kanal mana yang sebenarnya boleh dipakai.
+ *
+ * @returns {Promise<Array<{code:string,name:string,fee:number}>>}
+ */
+async function getDuitkuPaymentMethods(amount) {
+  const settings = getSettingsWithCache();
+  const merchantCode = settings.duitku_merchant_code;
+  const apiKey = settings.duitku_api_key;
+  const isLive = settings.duitku_mode === 'live' || settings.duitku_mode === 'production';
+
+  if (!merchantCode || !apiKey) throw new Error('Duitku Merchant Code atau API Key belum diatur.');
+
+  const paymentAmount = String(Math.floor(Number(amount) || 0));
+
+  // Duitku menuntut format waktu "YYYY-MM-DD HH:mm:ss" dan memakainya di
+  // dalam signature, jadi string yang dikirim harus persis yang di-hash.
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const datetime =
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+
+  const signature = crypto.createHash('sha256')
+    .update(merchantCode + paymentAmount + datetime + apiKey)
+    .digest('hex');
+
+  const url = `${duitkuHost(isLive)}/webapi/api/merchant/paymentmethod/getpaymentmethod`;
+  const res = await axios.post(url, {
+    merchantcode: merchantCode,
+    amount: paymentAmount,
+    datetime,
+    signature
+  }, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 15000
+  });
+
+  const list = Array.isArray(res.data?.paymentFee) ? res.data.paymentFee : [];
+  return list.map(m => ({
+    code: String(m.paymentMethod || '').trim(),
+    name: String(m.paymentName || '').trim(),
+    fee: Number(m.totalFee || 0)
+  })).filter(m => m.code);
+}
+
+/**
+ * Terjemahkan pilihan metode di halaman kita menjadi kode kanal Duitku.
+ *
+ * Mengembalikan null untuk "Semua Metode" — pada Duitku v2, menghilangkan
+ * paymentMethod membuat Duitku menampilkan halaman pemilihan kanalnya sendiri,
+ * berisi kanal yang benar-benar aktif. Ini jalur paling tahan banting karena
+ * tidak bergantung pada tebakan kita soal kanal mana yang disetujui.
+ */
+function duitkuMethodCode(method) {
+  const methodMap = {
+    'QRIS': 'SP',
+    'MANDIRIVA': 'M2',
+    'BRIVA': 'BR',
+    'BNIVA': 'I1',
+    'BCAVA': 'BC',
+    'PERMATAVA': 'BT'
+  };
+  const key = String(method || '').trim().toUpperCase();
+  if (!key || key === 'DUITKU' || key === 'ALL' || key === 'SEMUA') return null;
+  return methodMap[key] || null;
+}
+
+/**
  * Duitku: Membuat Transaksi (Checkout Link via Inquiry)
  */
 async function createDuitkuTransaction(invoice, customer, method = 'duitku', appUrl = '', opts = {}) {
@@ -304,12 +387,7 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     throw new Error('Duitku Merchant Code atau API Key belum diatur.');
   }
 
-  // Host sandbox Duitku adalah sandbox.duitku.com — BUKAN passport-sandbox.
-  // Penulisan yang keliru membuat DNS gagal (ENOTFOUND), sehingga pembayaran
-  // selalu berakhir "gagal memuat" walau merchant code & API key sudah benar.
-  const baseUrl = isLive
-    ? 'https://passport.duitku.com/webapi/api/merchant/v2/inquiry'
-    : 'https://sandbox.duitku.com/webapi/api/merchant/v2/inquiry';
+  const baseUrl = `${duitkuHost(isLive)}/webapi/api/merchant/v2/inquiry`;
 
   const prefix = String(opts.orderPrefix || 'INV').toUpperCase();
   const orderId = `${prefix}-${invoice.id}-${Date.now()}`;
@@ -342,23 +420,16 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     expiryPeriod: 1440 // 24 jam
   };
 
-  const methodMap = {
-    'QRIS': 'DQ',
-    'MANDIRIVA': 'M2',
-    'BRIVA': 'BR',
-    'BNIVA': 'I1',
-    'BCAVA': 'BC',
-    'PERMATAVA': 'BT'
-  };
-  const methodKey = String(method || '').trim().toUpperCase();
-  payload.paymentMethod = methodMap[methodKey] || 'DQ';
+  const channelCode = duitkuMethodCode(method);
 
-  try {
-    const res = await axios.post(baseUrl, payload, {
+  /** Satu kali percobaan inquiry. `code` null berarti biarkan Duitku yang memilih. */
+  async function inquire(code) {
+    const body = { ...payload };
+    if (code) body.paymentMethod = code;
+    const res = await axios.post(baseUrl, body, {
       headers: { 'Content-Type': 'application/json' },
       timeout: 20000   // jangan menggantung bila Duitku lambat merespons
     });
-
     if (res.data && res.data.paymentUrl) {
       return {
         success: true,
@@ -369,7 +440,31 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
       };
     }
     throw new Error(res.data?.statusMessage || 'Gagal mendapatkan payment URL dari Duitku');
+  }
+
+  /** Apakah kegagalan ini karena kanal yang diminta memang tidak tersedia? */
+  function isChannelUnavailable(err) {
+    if (!err?.response) return false;
+    const d = err.response.data;
+    const text = typeof d === 'string' ? d : JSON.stringify(d || {});
+    return err.response.status === 404 || /channel not available|not available|not enabled/i.test(text);
+  }
+
+  try {
+    return await inquire(channelCode);
   } catch (error) {
+    // Kanal spesifik ditolak? Coba sekali lagi tanpa menentukan kanal, supaya
+    // Duitku menampilkan halaman pemilihannya sendiri. Pembeli tetap bisa
+    // membayar walau kanal favoritnya belum diaktifkan di akun merchant.
+    if (channelCode && isChannelUnavailable(error)) {
+      logger.warn(`[Duitku] Kanal ${channelCode} (${method}) tidak tersedia untuk Rp ${amount}. Beralih ke halaman pilihan Duitku.`);
+      try {
+        return await inquire(null);
+      } catch (e2) {
+        error = e2;
+      }
+    }
+
     // Terjemahkan penyebab teknis menjadi keterangan yang bisa ditindaklanjuti.
     let msg;
     if (error.response) {
@@ -385,7 +480,21 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
       msg = error.message;
     }
 
-    logger.error(`[Duitku] Gagal membuat transaksi (mode=${isLive ? 'live' : 'sandbox'}, url=${baseUrl}, order=${orderId}): ${msg}`);
+    // Saat kanal ditolak, pesan Duitku tidak menyebut kanal mana yang boleh
+    // dipakai. Tanyakan langsung supaya admin tahu apa yang harus dibenahi —
+    // ini hanya berjalan di jalur gagal, jadi tidak membebani transaksi normal.
+    if (isChannelUnavailable(error)) {
+      try {
+        const avail = await getDuitkuPaymentMethods(amount);
+        msg += avail.length
+          ? ` | Kanal aktif untuk Rp ${amount}: ${avail.map(a => `${a.name} (${a.code})`).join(', ')}`
+          : ` | Tidak ada kanal Duitku yang aktif untuk nominal Rp ${amount} (kemungkinan di bawah batas minimum).`;
+      } catch (e3) {
+        msg += ` | Gagal mengambil daftar kanal aktif: ${e3.message}`;
+      }
+    }
+
+    logger.error(`[Duitku] Gagal membuat transaksi (mode=${isLive ? 'live' : 'sandbox'}, kanal=${channelCode || 'auto'}, nominal=${amount}, order=${orderId}): ${msg}`);
     throw new Error('Duitku Error: ' + msg);
   }
 }
@@ -463,6 +572,7 @@ module.exports = {
   createMidtransTransaction,
   createXenditTransaction,
   createDuitkuTransaction,
+  getDuitkuPaymentMethods,
   getTripayChannels,
   verifyTripayWebhook,
   verifyMidtransWebhook,
