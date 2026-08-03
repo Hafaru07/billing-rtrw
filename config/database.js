@@ -748,6 +748,30 @@ try { db.exec("ALTER TABLE invoices ADD COLUMN payment_link TEXT"); } catch (e) 
 try { db.exec("ALTER TABLE invoices ADD COLUMN payment_reference TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE invoices ADD COLUMN payment_payload TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE invoices ADD COLUMN payment_expires_at DATETIME"); } catch (e) {}
+// Kanal yang dipakai saat link pembayaran dibuat (mis. 'BC', 'NQ', 'FT').
+// Tanpa ini, link lama dipakai ulang walau pelanggan memilih metode berbeda —
+// sehingga pilihan barunya diabaikan diam-diam.
+try { db.exec("ALTER TABLE invoices ADD COLUMN payment_channel TEXT DEFAULT ''"); } catch (e) {}
+
+// Bersihkan link pembayaran lama yang tidak diketahui kanalnya.
+//
+// Tagihan yang sudah punya payment_link dari sebelum kolom ini ada tidak bisa
+// dinilai relevansinya — dan justru itulah link-link yang selama ini menahan
+// pelanggan di kanal retail sampai 24 jam. Dikosongkan sekali saja supaya link
+// baru dibuat sesuai metode yang benar-benar dipilih. Tidak ada data pembayaran
+// yang hilang: yang dihapus hanya tautan menuju halaman bayar.
+try {
+  const r = db.prepare(`
+    UPDATE invoices
+       SET payment_link = '', payment_expires_at = NULL
+     WHERE status = 'unpaid'
+       AND COALESCE(payment_link, '') <> ''
+       AND COALESCE(payment_channel, '') = ''
+  `).run();
+  if (r.changes > 0) {
+    console.log(`[DB] ${r.changes} link pembayaran lama tanpa catatan kanal dikosongkan.`);
+  }
+} catch (e) {}
 
 // Kolom untuk QRIS statis (semi-otomatis via nominal unik)
 try { db.exec("ALTER TABLE invoices ADD COLUMN qris_unique_code INTEGER"); } catch (e) {}

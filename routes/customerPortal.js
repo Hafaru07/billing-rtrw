@@ -2422,7 +2422,27 @@ router.post('/public/payment/create/:invoiceId', async (req, res) => {
     }
 
     const force = String(req.query.force || '').toLowerCase() === '1' || String(req.query.force || '').toLowerCase() === 'true';
-    if (!force && inv.payment_link) {
+    // Link pembayaran yang tersimpan hanya boleh dipakai ulang bila metodenya
+    // SAMA dengan yang baru saja dipilih pelanggan.
+    //
+    // Inilah penyebab sebenarnya dari "semua pembayaran mengarah ke Alfamart":
+    // satu percobaan lama yang terlanjur mendarat di kanal retail menyimpan
+    // link berumur 24 jam di kolom payment_link. Selama 24 jam itu, apa pun
+    // yang ditekan pelanggan langsung dialihkan ke link retail lama — gateway
+    // tidak pernah dipanggil lagi, jadi perbaikan pemilihan kanal pun tidak
+    // pernah terpakai.
+    //
+    // Halaman voucher tidak terkena karena tiap pembelian membuat baris order
+    // baru, sehingga tidak ada link lama yang bisa dipakai ulang.
+    const kanalTersimpan = String(inv.payment_channel || '').toUpperCase();
+    const metodeDiminta  = String(selectedMethod).toUpperCase();
+    const linkMasihRelevan = kanalTersimpan !== '' && kanalTersimpan === metodeDiminta;
+
+    if (!force && inv.payment_link && !linkMasihRelevan) {
+      logger.info(`[Payment] INV-${inv.id}: metode berubah (${kanalTersimpan || 'tidak tercatat'} -> ${metodeDiminta}), link lama diabaikan.`);
+    }
+
+    if (!force && inv.payment_link && linkMasihRelevan) {
       let expiresAtMs = inv.payment_expires_at ? new Date(inv.payment_expires_at).getTime() : 0;
       let payloadExpiresAt = null;
       if (inv.payment_payload) {
@@ -2442,7 +2462,8 @@ router.post('/public/payment/create/:invoiceId', async (req, res) => {
             link: inv.payment_link,
             reference: inv.payment_reference,
             payload: inv.payment_payload,
-            expires_at: payloadExpiresAt
+            expires_at: payloadExpiresAt,
+            channel: inv.payment_channel   // jangan hilangkan saat menyegarkan masa berlaku
           });
         } catch {}
       }
@@ -2516,7 +2537,9 @@ router.post('/public/payment/create/:invoiceId', async (req, res) => {
         link: result.link,
         reference: result.reference,
         payload: result.payload,
-        expires_at: resolvedExpiresAt
+        expires_at: resolvedExpiresAt,
+        channel: selectedMethod   // yang DIMINTA pelanggan — jadi acuan saat menilai
+                                   // apakah link lama masih relevan
       });
 
       logger.info(`[Payment] New link created for INV-${inv.id} via ${gateway} (public)`);
@@ -2804,7 +2827,27 @@ router.get('/payment/create/:invoiceId', async (req, res) => {
     }
 
     const force = String(req.query.force || '').toLowerCase() === '1' || String(req.query.force || '').toLowerCase() === 'true';
-    if (!force && inv.payment_link) {
+    // Link pembayaran yang tersimpan hanya boleh dipakai ulang bila metodenya
+    // SAMA dengan yang baru saja dipilih pelanggan.
+    //
+    // Inilah penyebab sebenarnya dari "semua pembayaran mengarah ke Alfamart":
+    // satu percobaan lama yang terlanjur mendarat di kanal retail menyimpan
+    // link berumur 24 jam di kolom payment_link. Selama 24 jam itu, apa pun
+    // yang ditekan pelanggan langsung dialihkan ke link retail lama — gateway
+    // tidak pernah dipanggil lagi, jadi perbaikan pemilihan kanal pun tidak
+    // pernah terpakai.
+    //
+    // Halaman voucher tidak terkena karena tiap pembelian membuat baris order
+    // baru, sehingga tidak ada link lama yang bisa dipakai ulang.
+    const kanalTersimpan = String(inv.payment_channel || '').toUpperCase();
+    const metodeDiminta  = String(methodRaw).toUpperCase();
+    const linkMasihRelevan = kanalTersimpan !== '' && kanalTersimpan === metodeDiminta;
+
+    if (!force && inv.payment_link && !linkMasihRelevan) {
+      logger.info(`[Payment] INV-${inv.id}: metode berubah (${kanalTersimpan || 'tidak tercatat'} -> ${metodeDiminta}), link lama diabaikan.`);
+    }
+
+    if (!force && inv.payment_link && linkMasihRelevan) {
       let expiresAtMs = inv.payment_expires_at ? new Date(inv.payment_expires_at).getTime() : 0;
       let payloadExpiresAt = null;
       if (inv.payment_payload) {
@@ -2824,7 +2867,8 @@ router.get('/payment/create/:invoiceId', async (req, res) => {
             link: inv.payment_link,
             reference: inv.payment_reference,
             payload: inv.payment_payload,
-            expires_at: payloadExpiresAt
+            expires_at: payloadExpiresAt,
+            channel: inv.payment_channel   // jangan hilangkan saat menyegarkan masa berlaku
           });
         } catch {}
       }
@@ -2930,7 +2974,9 @@ router.get('/payment/create/:invoiceId', async (req, res) => {
         link: result.link,
         reference: result.reference,
         payload: result.payload,
-        expires_at: resolvedExpiresAt
+        expires_at: resolvedExpiresAt,
+        channel: methodRaw   // yang DIMINTA pelanggan — jadi acuan saat menilai
+                                   // apakah link lama masih relevan
       });
 
       logger.info(`[Payment] New link created for INV-${inv.id} via ${gateway}`);

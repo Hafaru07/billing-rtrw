@@ -611,20 +611,30 @@ function createInstallProrataCatchUpInvoice(customerId) {
 }
 
 function updatePaymentInfo(invoiceId, data) {
-  const { 
-    gateway, order_id, link, reference, payload, expires_at 
+  const {
+    gateway, order_id, link, reference, payload, expires_at, channel
   } = data;
-  
+
+  // `channel` mencatat metode yang benar-benar dipakai saat link dibuat.
+  // Dipakai untuk memutuskan apakah link lama masih relevan bila pelanggan
+  // kembali dan memilih metode yang berbeda.
   return db.prepare(`
-    UPDATE invoices SET 
+    UPDATE invoices SET
       payment_gateway = ?,
       payment_order_id = ?,
       payment_link = ?,
       payment_reference = ?,
       payment_payload = ?,
-      payment_expires_at = ?
+      payment_expires_at = ?,
+      payment_channel = ?
     WHERE id = ?
-  `).run(gateway, order_id, link, reference, payload ? JSON.stringify(payload) : null, expires_at, invoiceId);
+  `).run(
+    gateway, order_id, link, reference,
+    payload ? JSON.stringify(payload) : null,
+    expires_at,
+    String(channel || ''),
+    invoiceId
+  );
 }
 
 module.exports = {
