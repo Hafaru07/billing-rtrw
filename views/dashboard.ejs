@@ -1741,29 +1741,37 @@
                 const group = String(ch.group || '').toLowerCase();
                 let icon = 'bi-wallet2';
                 let badgeClass = 'pb-bank';
-                
-                if (code === 'QRIS' || code.includes('QRIS')) {
+
+                // Duitku memberi kode asli 2 huruf (SP, BC, M2), jadi pencocokan
+                // ikon harus melihat NAMA kanal juga — kalau hanya kodenya, semua
+                // kanal Duitku akan tampil dengan ikon generik yang sama.
+                const tag = (code + ' ' + String(name)).toUpperCase();
+
+                if (tag.includes('QRIS')) {
                   icon = 'bi-qr-code-scan';
                   badgeClass = 'pb-bank';
-                } else if (code.includes('DANA')) {
+                } else if (tag.includes('DANA')) {
                   icon = 'bi-wallet2';
                   badgeClass = 'pb-dana';
-                } else if (code.includes('OVO')) {
+                } else if (tag.includes('OVO')) {
                   icon = 'bi-wallet2';
                   badgeClass = 'pb-ovo';
-                } else if (code.includes('SHOPEE')) {
+                } else if (tag.includes('SHOPEE')) {
                   icon = 'bi-wallet2';
                   badgeClass = 'pb-shopeepay';
-                } else if (code.includes('LINKAJA')) {
+                } else if (tag.includes('LINKAJA')) {
                   icon = 'bi-wallet2';
                   badgeClass = 'pb-linkaja';
-                } else if (code.includes('GOPAY')) {
+                } else if (tag.includes('GOPAY')) {
                   icon = 'bi-wallet2';
                   badgeClass = 'pb-gopay';
-                } else if (code.includes('VA') || group.includes('virtual')) {
+                } else if (tag.includes('VA') || tag.includes('BANK') || group.includes('virtual')) {
                   icon = 'bi-bank';
                   badgeClass = 'pb-bank';
-                } else if (code.includes('SNAP') || code.includes('XENDIT') || code.includes('DUITKU')) {
+                } else if (tag.includes('ALFA') || tag.includes('INDOMARET') || tag.includes('POS') || tag.includes('PEGADAIAN')) {
+                  icon = 'bi-shop';
+                  badgeClass = 'pb-bank';
+                } else if (tag.includes('SNAP') || tag.includes('XENDIT') || tag.includes('DUITKU')) {
                   icon = 'bi-credit-card';
                   badgeClass = 'pb-bank';
                 }

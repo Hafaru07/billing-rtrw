@@ -2768,6 +2768,41 @@ router.get('/payment/create/:invoiceId', async (req, res) => {
 
     const methodRaw = String(req.query.method || 'QRIS').toUpperCase();
 
+    // QRIS statis diperiksa DI SINI — sebelum gateway diselesaikan.
+    //
+    // Sebelumnya pemeriksaannya berbunyi `if (gateway === 'qris_static')`, yang
+    // hanya benar bila QRIS statis kebetulan menjadi gateway utama. Saat gateway
+    // utama adalah Duitku, tombol "QRIS Statis (Scan)" lolos ke jalur gateway
+    // dengan method "QRIS_STATIC" yang tidak dikenal Duitku, lalu dibelokkan ke
+    // kanal sembarang — itulah kenapa pembayaran berakhir di gerai retail.
+    //
+    // Halaman voucher dan cek-tagihan sudah memeriksa berdasarkan METHOD sejak
+    // awal; ini menyamakan perilaku dashboard dengan keduanya.
+    if (methodRaw === 'QRIS_STATIC') {
+      const { uniqueCode, amountUnique } = ensureInvoiceQrisUnique(inv, false);
+      const qrisQrUrl = await getStaticQrisQrUrlForAmount(settings, amountUnique);
+      if (!qrisQrUrl) throw new Error('QRIS statis belum diatur oleh admin');
+      const adminWaDigits = getFirstAdminWaDigits(settings);
+      return res.render('qris_static', {
+        settings,
+        backUrl: loginId ? '/customer/dashboard#billing-section' : '/isolated',
+        error: null,
+        info: null,
+        kind: 'invoice',
+        invoiceId: Number(inv.id),
+        periodText: formatPeriod(inv.period_month, inv.period_year),
+        customerName: profile?.name || inv.customer_name || '',
+        amountUnique,
+        uniqueCode,
+        qrisQrUrl,
+        helpText: 'Pastikan nominal dibayar sama persis agar sistem dapat mendeteksi pembayaran.',
+        adminWaDigits,
+        publicToken: publicToken || '',
+        proofUrl: '',
+        proofActionUrl: '/customer/payment/proof/' + encodeURIComponent(String(inv.id))
+      });
+    }
+
     const force = String(req.query.force || '').toLowerCase() === '1' || String(req.query.force || '').toLowerCase() === 'true';
     if (!force && inv.payment_link) {
       let expiresAtMs = inv.payment_expires_at ? new Date(inv.payment_expires_at).getTime() : 0;

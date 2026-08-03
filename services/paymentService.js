@@ -446,6 +446,33 @@ async function resolvePaymentChannels(gateway, amount = 0) {
 }
 
 /**
+ * Pilih kanal pengganti yang paling wajar dari daftar kanal aktif Duitku.
+ *
+ * Duitku mengembalikan kanalnya dalam urutan yang tidak ada hubungannya dengan
+ * preferensi pembeli — gerai retail (Alfamart/Pos/Pegadaian) sering berada di
+ * urutan depan. Memilih elemen pertama begitu saja membuat orang yang menekan
+ * "QRIS" mendarat di halaman kode pembayaran Alfamart.
+ *
+ * Urutan di bawah mendahulukan yang paling instan dan paling murah bagi
+ * pelanggan: QRIS → e-wallet → Virtual Account → retail (paling akhir, karena
+ * menuntut pembeli datang ke gerai).
+ */
+function preferDuitkuChannel(list) {
+  const RANK = [
+    /qris/i,                                   // scan, langsung
+    /ovo|dana|shopee|linkaja|gopay|jenius/i,   // e-wallet
+    /virtual account|\bva\b|bank/i,            // transfer VA
+    /alfa|indomaret|pos|pegadaian|retail|gerai/i // ke gerai — pilihan terakhir
+  ];
+  const skor = (m) => {
+    const teks = `${m.name || ''} ${m.code || ''}`;
+    for (let i = 0; i < RANK.length; i++) if (RANK[i].test(teks)) return i;
+    return RANK.length - 0.5; // tak dikenal: di atas retail, di bawah VA
+  };
+  return [...list].sort((a, b) => skor(a) - skor(b))[0];
+}
+
+/**
  * Duitku: Membuat Transaksi (Checkout Link via Inquiry)
  */
 async function createDuitkuTransaction(invoice, customer, method = 'duitku', appUrl = '', opts = {}) {
@@ -520,9 +547,12 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     return err.response.status === 404 || /channel not available|not available|not enabled/i.test(text);
   }
 
-  // Duitku v2 mewajibkan paymentMethod. Bila pilihan tidak bisa dipetakan
-  // (mis. "Semua Metode"), ambil kanal pertama yang benar-benar aktif untuk
-  // nominal ini daripada menebak kode yang mungkin belum disetujui.
+  // Duitku v2 mewajibkan paymentMethod. Bila pilihan tidak bisa dipetakan,
+  // pilih kanal pengganti yang MASUK AKAL — bukan sekadar yang pertama muncul.
+  //
+  // Urutan daftar dari Duitku tidak ada kaitannya dengan preferensi pembeli;
+  // mengambil begitu saja elemen pertama pernah membuat pembayaran mendarat di
+  // gerai retail (Alfamart) padahal pelanggan menekan tombol QRIS.
   if (!channelCode) {
     const avail = await getDuitkuPaymentMethods(amount);
     if (!avail.length) {
@@ -530,8 +560,9 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
       logger.error(`[Duitku] ${m} (order=${orderId})`);
       throw new Error('Duitku Error: ' + m);
     }
-    channelCode = avail[0].code;
-    logger.info(`[Duitku] Metode "${method}" tidak spesifik — memakai kanal aktif pertama: ${avail[0].name} (${channelCode}).`);
+    const picked = preferDuitkuChannel(avail);
+    channelCode = picked.code;
+    logger.warn(`[Duitku] Metode "${method}" tidak dikenal — dialihkan ke ${picked.name} (${channelCode}). Periksa daftar metode di halaman pembayaran.`);
   }
 
   try {
@@ -542,7 +573,8 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     if (isChannelUnavailable(error)) {
       logger.warn(`[Duitku] Kanal ${channelCode} (${method}) tidak tersedia untuk Rp ${amount}. Mencari kanal pengganti...`);
       try {
-        const alt = (await getDuitkuPaymentMethods(amount)).find(a => a.code !== channelCode);
+        const sisa = (await getDuitkuPaymentMethods(amount)).filter(a => a.code !== channelCode);
+        const alt = sisa.length ? preferDuitkuChannel(sisa) : null;
         if (alt) {
           logger.warn(`[Duitku] Beralih ke ${alt.name} (${alt.code}).`);
           return await inquire(alt.code);
