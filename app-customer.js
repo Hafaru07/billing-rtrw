@@ -1,3 +1,31 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ZONA WAKTU — HARUS PALING ATAS, SEBELUM MODUL LAIN DIMUAT
+// ════════════════════════════════════════════════════════════════════════════
+// Node memakai zona waktu sistem operasi. Di VPS yang defaultnya UTC, setiap
+// `new Date().toLocaleString()` akan meleset 7 jam dari WIB — jam di halaman
+// monitoring, riwayat tiket, waktu bayar, dan lain-lain ikut salah.
+//
+// Menetapkan process.env.TZ di sini memperbaiki SEMUANYA sekaligus, tanpa
+// perlu mengubah puluhan berkas view, dan tanpa bergantung pada konfigurasi
+// OS server. Wajib dijalankan sebelum modul lain memuat/menyimpan objek Date.
+(() => {
+  try {
+    const nodePath = require('path');
+    const nodeFs = require('fs');
+    const cfgPath = nodePath.join(__dirname, 'settings.json');
+    let tz = 'Asia/Jakarta';
+    if (nodeFs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(nodeFs.readFileSync(cfgPath, 'utf8')) || {};
+      if (typeof cfg.timezone === 'string' && cfg.timezone.trim()) tz = cfg.timezone.trim();
+    }
+    // Pastikan zona waktunya dikenal sebelum dipakai
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    process.env.TZ = tz;
+  } catch (e) {
+    process.env.TZ = 'Asia/Jakarta';   // cadangan aman
+  }
+})();
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
