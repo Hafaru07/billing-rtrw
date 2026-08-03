@@ -183,42 +183,8 @@ router.get('/', requireAgentSession, async (req, res) => {
   let paymentChannels = [];
   try {
     const settings = getSettings();
-    const gateway = resolveConfiguredGateway(settings);
-    if (!gateway) {
-      paymentChannels = [];
-    } else if (gateway === 'tripay') {
-      paymentChannels = await paymentSvc.getTripayChannels();
-    } else if (gateway === 'midtrans') {
-      paymentChannels = [
-        { code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    } else if (gateway === 'xendit') {
-      paymentChannels = [
-        { code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    } else if (gateway === 'duitku') {
-      paymentChannels = [
-        { code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    }
+    // Nominal top-up agen mengikuti batas minimum form (Rp 10.000).
+    paymentChannels = await paymentSvc.resolvePaymentChannels(resolveConfiguredGateway(settings), 10000);
   } catch(e) {
     paymentChannels = [];
   }

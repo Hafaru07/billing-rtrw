@@ -9,6 +9,7 @@ const db = require('../config/database');
 const customerDevice = require('../services/customerDeviceService');
 const customerSvc = require('../services/customerService');
 const billingSvc = require('../services/billingService');
+const invoiceRenderSvc = require('../services/invoiceRenderService');
 const mikrotikService = require('../services/mikrotikService');
 const adminSvc = require('../services/adminService');
 const agentSvc = require('../services/agentService');
@@ -2652,80 +2653,6 @@ router.get('/billing', requireAdminSession, requireSidebarMenuAccess('billing'),
   });
 });
 
-/**
- * Susun rincian baris invoice: Biaya Bulanan + PPN.
- *
- * Dua mode, dipilih otomatis:
- *
- * 1. Mode "billed" — paket mengaktifkan PPN/USO, sehingga pajak benar-benar
- *    DITAMBAHKAN saat tagihan dibuat dan tercatat di kolom notes
- *    ("AUTO: ... | PPN 11% (Rp 11.000)"). Nilai pajak diambil apa adanya dari
- *    catatan itu, bukan dihitung ulang, supaya angka yang tercetak persis sama
- *    dengan yang ditagihkan walaupun harga/persen paket sudah diubah setelahnya.
- *
- * 2. Mode "inclusive" — paket tidak mengaktifkan PPN, jadi harga paket dianggap
- *    SUDAH TERMASUK PPN. Invoice tinggal memecahnya menjadi DPP + PPN.
- *    Total yang dibayar pelanggan tidak berubah sama sekali:
- *        DPP = total / (1 + persen/100)   →   PPN = total - DPP
- *
- * Di kedua mode berlaku: subtotal + seluruh pajak == invoice.amount (tepat).
- */
-function buildInvoiceLines(invoice) {
-  const total = Number(invoice?.amount) || 0;
-  const notes = String(invoice?.notes || '');
-  const result = { taxes: [], adjustments: [], subtotal: total, mode: 'inclusive' };
-
-  const parseRp = (s) => {
-    const n = String(s || '').replace(/[^\d]/g, '');
-    return n ? Number(n) : 0;
-  };
-
-  const autoMatch = notes.match(/AUTO:\s*(.+)/i);
-  let taxTotal = 0;
-
-  if (autoMatch) {
-    for (const partRaw of autoMatch[1].split('|')) {
-      const part = partRaw.trim();
-      if (!part) continue;
-
-      const ppn = part.match(/PPN\s*([\d.,]+)\s*%\s*\(Rp\s*([\d.,]+)\)/i);
-      if (ppn) {
-        const val = parseRp(ppn[2]);
-        result.taxes.push({ label: `PPN ${ppn[1]}%`, amount: val });
-        taxTotal += val;
-        continue;
-      }
-
-      const uso = part.match(/USO\s*([\d.,]+)\s*%\s*\(Rp\s*([\d.,]+)\)/i);
-      if (uso) {
-        const val = parseRp(uso[2]);
-        result.taxes.push({ label: `USO ${uso[1]}%`, amount: val });
-        taxTotal += val;
-        continue;
-      }
-
-      // Keterangan lain (promo, prorata, susulan) tampil sebagai catatan baris
-      result.adjustments.push(part);
-    }
-  }
-
-  if (result.taxes.length > 0) {
-    // Mode 1: pajak memang ditambahkan saat penagihan
-    result.mode = 'billed';
-    result.subtotal = Math.max(0, total - taxTotal);
-    return result;
-  }
-
-  // Mode 2: harga dianggap sudah termasuk PPN — pecah tanpa mengubah total
-  const pct = Number(getSetting('invoice_ppn_percentage', 12)) || 12;
-  if (pct > 0 && total > 0) {
-    const dpp = Math.round(total / (1 + pct / 100));
-    const ppnVal = total - dpp; // sisa dibebankan ke PPN agar penjumlahan tepat
-    result.subtotal = dpp;
-    result.taxes.push({ label: `PPN ${pct % 1 === 0 ? pct : pct.toFixed(2)}%`, amount: ppnVal, inclusive: true });
-  }
-  return result;
-}
 
 router.get('/billing/:id/print', requireAdminSession, (req, res) => {
   const inv = billingSvc.getInvoiceById(req.params.id);
@@ -2748,38 +2675,16 @@ router.get('/billing/:id/print', requireAdminSession, (req, res) => {
     if (customer.package_id) pkg = customerSvc.getPackageById(customer.package_id);
   } catch (e) { /* opsional, invoice tetap tercetak tanpa ini */ }
 
-  // Jatuh tempo = tanggal isolir pelanggan pada bulan periode tagihan.
-  // Bila tanggal isolir melebihi jumlah hari bulan itu (mis. 31 di Februari),
-  // digeser ke hari terakhir bulan tersebut.
-  let dueInfo = null;
-  try {
-    const dueDay = Number(customer.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10) || 10;
-    const lastDay = new Date(inv.period_year, inv.period_month, 0).getDate();
-    const day = Math.min(Math.max(1, dueDay), lastDay);
-    const due = new Date(inv.period_year, inv.period_month - 1, day);
-
-    const today = getCurrentDateInTimezone();
-    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const diffDays = Math.round((due - todayMid) / 86400000);
-
-    dueInfo = {
-      date: due,
-      day,
-      month: inv.period_month,
-      year: inv.period_year,
-      isOverdue: inv.status === 'unpaid' && diffDays < 0,
-      daysLeft: diffDays
-    };
-  } catch (e) { /* jatuh tempo opsional */ }
-
   res.render('admin/print_invoice', {
     invoice: inv,
     customer,
     pkg,
     company,
     settings,
-    breakdown: buildInvoiceLines(inv),
-    dueInfo
+    breakdown: invoiceRenderSvc.buildInvoiceLines(inv),
+    dueInfo: invoiceRenderSvc.buildDueInfo(inv, customer),
+    verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
+    issuedToCustomer: false
   });
 });
 
@@ -4149,6 +4054,10 @@ router.post('/settings', requireAdminSession, express.urlencoded({ extended: tru
     if (newSettings.whatsapp_broadcast_delay) newSettings.whatsapp_broadcast_delay = parseInt(newSettings.whatsapp_broadcast_delay);
     if (newSettings.digiflazz_markup !== undefined) newSettings.digiflazz_markup = parseInt(newSettings.digiflazz_markup) || 0;
     
+    // Checkbox yang tidak dicentang TIDAK ikut terkirim browser, jadi tidak
+    // adanya field ini harus dibaca sebagai "matikan", bukan "biarkan".
+    newSettings.ppob_customer_enabled = (newSettings.ppob_customer_enabled === 'true' || newSettings.ppob_customer_enabled === true);
+
     newSettings.login_otp_enabled = (newSettings.login_otp_enabled === 'true');
     newSettings.telegram_enabled = (newSettings.telegram_enabled === 'true');
     newSettings.auto_backup_enabled = (newSettings.auto_backup_enabled === 'true');

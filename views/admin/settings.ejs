@@ -433,6 +433,21 @@
               <div class="hint"><a href="/admin/digiflazz" style="color:var(--brand);font-weight:700;text-decoration:none">Buka Dashboard Digiflazz</a></div>
             </div>
           </div>
+          <div class="form-row">
+            <div class="fg">
+              <label class="fl">Menu Pulsa &amp; PPOB di Portal Pelanggan</label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:4px">
+                <input type="checkbox" name="ppob_customer_enabled" value="true" id="ppob_customer_enabled"
+                  <%= (settings.ppob_customer_enabled === undefined || settings.ppob_customer_enabled) ? 'checked' : '' %>>
+                <span style="font-size:13px;color:var(--muted)">Tampilkan menu Pulsa &amp; PPOB untuk pelanggan</span>
+              </label>
+              <div style="font-size:10px; color:var(--muted); margin-top:6px">
+                Bila dimatikan, menu hilang dari dashboard pelanggan <em>dan</em> alamat
+                <span class="mono">/customer/ppob</span> ditolak — bukan sekadar disembunyikan.
+                Dashboard admin Digiflazz tetap bisa dibuka.
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Admin Auth -->

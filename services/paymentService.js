@@ -381,6 +381,70 @@ function duitkuMethodCode(method) {
   return null;
 }
 
+/** Daftar cadangan bila API gateway tidak bisa dihubungi. */
+const FALLBACK_CHANNELS = [
+  { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
+  { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
+  { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
+  { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
+  { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
+  { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
+];
+
+/**
+ * Daftar metode pembayaran yang layak ditampilkan ke pengguna.
+ *
+ * Sebelumnya tiap halaman menyusun daftarnya sendiri secara hardcoded,
+ * sehingga halaman voucher dan dashboard pelanggan bisa berbeda isi. Satu
+ * fungsi ini dipakai bersama supaya keduanya selalu sinkron.
+ *
+ * Khusus Duitku, daftarnya ditanyakan langsung ke Duitku memakai nominal yang
+ * akan dibayar — tiap kanal punya batas minimum sendiri, jadi menampilkan
+ * kanal yang tidak memenuhi syarat hanya membuat pembeli menemui error
+ * setelah menekan tombol Bayar.
+ *
+ * @param {string} gateway  gateway aktif ('duitku' | 'midtrans' | ...)
+ * @param {number} amount   nominal yang akan dibayar (0 = tidak diketahui)
+ */
+async function resolvePaymentChannels(gateway, amount = 0) {
+  const g = String(gateway || '').toLowerCase();
+  if (!g) return [];
+
+  if (g === 'tripay') {
+    try { return await getTripayChannels(); } catch { return []; }
+  }
+
+  if (g === 'duitku') {
+    const amt = Math.floor(Number(amount) || 0);
+    if (amt > 0) {
+      try {
+        const avail = await Promise.race([
+          getDuitkuPaymentMethods(amt),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
+        ]);
+        if (avail && avail.length) {
+          return avail.map(m => ({
+            code: m.code,                     // kode asli Duitku, mis. SP / BC / M2
+            name: m.name,
+            group: /va|virtual/i.test(m.name) ? 'Virtual Account' : 'E-Wallet',
+            active: true,
+            total_fee: m.fee ? { flat: m.fee } : null
+          }));
+        }
+      } catch (e) {
+        logger.warn(`[Pembayaran] Gagal ambil kanal Duitku untuk Rp ${amt}: ${e.message}. Memakai daftar bawaan.`);
+      }
+    }
+    // "Semua Metode" sengaja tidak disertakan: Duitku v2 mewajibkan
+    // paymentMethod, jadi pilihan itu selalu ditolak HTTP 400.
+    return [...FALLBACK_CHANNELS];
+  }
+
+  if (g === 'midtrans') return [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...FALLBACK_CHANNELS];
+  if (g === 'xendit') return [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...FALLBACK_CHANNELS];
+  return [...FALLBACK_CHANNELS];
+}
+
 /**
  * Duitku: Membuat Transaksi (Checkout Link via Inquiry)
  */
@@ -596,6 +660,7 @@ module.exports = {
   createXenditTransaction,
   createDuitkuTransaction,
   getDuitkuPaymentMethods,
+  resolvePaymentChannels,
   getTripayChannels,
   verifyTripayWebhook,
   verifyMidtransWebhook,

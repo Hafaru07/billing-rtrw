@@ -177,18 +177,10 @@ async function warmVoucherCache() {
           channels = [];
         }
       } else {
-        const base = [
-          { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
-          { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-        ];
-        if (gateway === 'midtrans') channels = [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...base];
-        else if (gateway === 'xendit') channels = [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-        else if (gateway === 'duitku') channels = [{ code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-        else channels = base;
+        // Nominal belum diketahui saat pemanasan cache, jadi daftar bawaan
+        // yang disimpan. Halaman voucher akan menyusun ulang memakai harga
+        // paket termurah begitu diminta.
+        channels = await paymentSvc.resolvePaymentChannels(gateway, 0);
       }
 
       global[PAYMENT_CACHE_KEY] = {

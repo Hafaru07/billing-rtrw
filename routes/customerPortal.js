@@ -12,6 +12,7 @@ const ticketSvc = require('../services/ticketService');
 const crypto = require('crypto');
 const db = require('../config/database');
 const sidebarMenuSvc = require('../services/sidebarMenuService');
+const invoiceRenderSvc = require('../services/invoiceRenderService');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -22,6 +23,20 @@ const { Jimp, JimpMime } = require('jimp');
 const { BinaryBitmap, HybridBinarizer, RGBLuminanceSource, MultiFormatReader, BarcodeFormat, DecodeHintType } = require('@zxing/library');
 const { loginRateLimiter } = require('../middleware/rateLimiter');
 const { pickQrisUniqueAmount, qrisRangeFullMessage } = require('../utils/qrisUnique');
+
+/**
+ * Apakah menu Pulsa & PPOB boleh tampil untuk pelanggan?
+ *
+ * Sebelumnya ini menumpang pada status menu sidebar admin "digiflazz", sehingga
+ * menyembunyikan menu admin ikut mematikan fitur untuk pelanggan — dua hal yang
+ * sebenarnya berbeda. Kini dikendalikan sakelar sendiri di Pengaturan.
+ *
+ * Default menyala supaya instalasi lama tidak mendadak kehilangan fitur.
+ */
+function isPpobEnabledForCustomer() {
+  const s = getSettingsWithCache();
+  return s.ppob_customer_enabled === undefined ? true : !!s.ppob_customer_enabled;
+}
 
 // Configure multer for customer photo uploads
 const storage = multer.diskStorage({
@@ -809,25 +824,6 @@ router.get('/check-billing', async (req, res) => {
   let paymentChannels = [];
 
   const gateway = resolveConfiguredGateway(settings);
-  if (gateway === 'tripay') {
-    try {
-      paymentChannels = await paymentSvc.getTripayChannels();
-    } catch {
-      paymentChannels = [];
-    }
-  } else if (gateway) {
-    const base = [
-      { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
-      { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-    ];
-    if (gateway === 'midtrans') paymentChannels = [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...base];
-    else if (gateway === 'xendit') paymentChannels = [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-    else if (gateway === 'duitku') paymentChannels = [{ code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-  }
 
   if (query) {
     customer = customerSvc.findCustomerByAny(query);
@@ -871,6 +867,19 @@ router.get('/check-billing', async (req, res) => {
       });
     }
   }
+
+  // Kanal disusun setelah tagihan diketahui, memakai nominal belum-bayar
+  // TERKECIL — kanal yang lolos di nominal terkecil pasti juga lolos di
+  // tagihan yang lebih besar.
+  const smallestUnpaid = unpaidInvoices
+    .map(i => Math.floor(Number(i.amount) || 0))
+    .filter(n => n > 0)
+    .sort((a, b) => a - b)[0] || 0;
+  paymentChannels = await paymentSvc.resolvePaymentChannels(gateway, smallestUnpaid)
+    .catch(e => {
+      logger.error('[CekTagihan] Gagal menyusun metode pembayaran: ' + e.message);
+      return [];
+    });
 
   res.render('public_check_billing', {
     settings,
@@ -1093,53 +1102,8 @@ router.get('/voucher', async (req, res) => {
         logger.warn('[Voucher] Tripay channels fetch failed or timeout: ' + e.message);
         channels = [];
       }
-    } else if (gateway === 'duitku' && Number(amount) > 0) {
-      // Duitku bisa ditanya kanal apa yang aktif untuk nominal tertentu.
-      // Memakainya berarti setiap pilihan yang tampil pasti bisa dibayar —
-      // tidak ada lagi "Payment channel not available" atau "di bawah batas
-      // minimum" setelah pembeli menekan Bayar.
-      try {
-        const avail = await Promise.race([
-          paymentSvc.getDuitkuPaymentMethods(amount),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
-        ]);
-        channels = (avail || []).map(m => ({
-          code: m.code,                       // kode asli Duitku, mis. SP / BC / M2
-          name: m.name,
-          group: /va|virtual/i.test(m.name) ? 'Virtual Account' : 'E-Wallet',
-          active: true,
-          total_fee: m.fee ? { flat: m.fee } : null
-        }));
-      } catch (e) {
-        logger.warn(`[Voucher] Gagal ambil kanal Duitku untuk Rp ${amount}: ${e.message}. Memakai daftar bawaan.`);
-        channels = [];
-      }
-      if (channels.length === 0) {
-        // Jaring pengaman bila API Duitku sedang tidak bisa dihubungi.
-        // "Semua Metode" sengaja tidak disertakan: Duitku v2 mewajibkan
-        // paymentMethod, jadi pilihan itu selalu ditolak HTTP 400.
-        channels = [
-          { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
-          { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-          { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-        ];
-      }
     } else {
-      // Gateway lain tidak perlu query API, langsung return hardcoded
-      const base = [
-        { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-      if (gateway === 'midtrans') channels = [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...base];
-      else if (gateway === 'xendit') channels = [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-      else channels = base;
+      channels = await paymentSvc.resolvePaymentChannels(gateway, amount);
     }
     
     // Simpan ke cache (jika enabled)
@@ -1916,27 +1880,21 @@ router.get('/dashboard', async (req, res) => {
   else if (pppoeFromDevice) req.session.pppoe_username = pppoeFromDevice;
 
   const settings = getSettingsWithCache();
-  let paymentChannels = [];
   const gateway = resolveConfiguredGateway(settings);
-  if (gateway === 'tripay') {
-    try {
-      paymentChannels = await paymentSvc.getTripayChannels();
-    } catch {
-      paymentChannels = [];
-    }
-  } else if (gateway) {
-    const base = [
-      { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
-      { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-      { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-    ];
-    if (gateway === 'midtrans') paymentChannels = [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...base];
-    else if (gateway === 'xendit') paymentChannels = [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-    else if (gateway === 'duitku') paymentChannels = [{ code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-  }
+
+  // Nominal tagihan TERKECIL yang belum dibayar menentukan kanal mana yang
+  // boleh ditampilkan — kanal yang lolos di nominal terkecil pasti juga lolos
+  // di tagihan yang lebih besar, jadi satu daftar aman untuk semua tagihan.
+  const unpaidAmounts = (Array.isArray(invoices) ? invoices : [])
+    .filter(i => i && i.status === 'unpaid')
+    .map(i => Math.floor(Number(i.amount) || 0))
+    .filter(n => n > 0)
+    .sort((a, b) => a - b);
+  const paymentChannels = await paymentSvc.resolvePaymentChannels(gateway, unpaidAmounts[0] || 0)
+    .catch(e => {
+      logger.error('[Dashboard] Gagal menyusun metode pembayaran: ' + e.message);
+      return [];
+    });
 
   let trafficMaxDownMbps = 10;
   let trafficMaxUpMbps = 10;
@@ -1947,8 +1905,7 @@ router.get('/dashboard', async (req, res) => {
     if (Number.isFinite(upKbps) && upKbps > 0) trafficMaxUpMbps = Math.max(1, Math.round(upKbps / 1000));
   }
 
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  const showPPOB = states['digiflazz'] === 'visible';
+  const showPPOB = isPpobEnabledForCustomer();
 
   res.render('dashboard', {
     customer: deviceData || fallbackCustomer(loginId),
@@ -2325,8 +2282,7 @@ router.post('/change-tag', async (req, res) => {
   if (!newTag || newTag === oldTag) {
     const data = await getCustomerDeviceData(oldTag);
     const invoices = billingSvc.getInvoicesByAny(oldTag);
-    const states = sidebarMenuSvc.getStoredMenuStates();
-    const showPPOB = states['digiflazz'] === 'visible';
+    const showPPOB = isPpobEnabledForCustomer();
     return res.render('dashboard', {
       customer: data || fallbackCustomer(oldTag),
       profile: null,
@@ -2384,8 +2340,7 @@ router.post('/change-tag', async (req, res) => {
   const tickets = profile ? ticketSvc.getTicketsByCustomerId(profile.id) : [];
   const customerBalance = profile ? getCustomerBalance(profile.id) : 0;
 
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  const showPPOB = states['digiflazz'] === 'visible';
+  const showPPOB = isPpobEnabledForCustomer();
   res.render('dashboard', {
     customer: deviceData || fallbackCustomer(resolvedPhone),
     profile: profile || null,
@@ -2707,6 +2662,74 @@ router.get('/payment/status/:invoiceId', async (req, res) => {
   } catch (e) {
     logger.error(`[PAYMENT-STATUS] Error: ${e && e.message ? e.message : String(e)}`);
     return res.status(500).json({ error: 'Internal error', status: 'error' });
+  }
+});
+
+/**
+ * Cetak invoice oleh pelanggan sendiri.
+ *
+ * PENGAMANAN — dokumen ini bisa dijadikan "bukti bayar", jadi diperlakukan
+ * sebagai permukaan yang rawan disalahgunakan:
+ *
+ *  1. Wajib sesi login, atau token bertanda tangan yang memang diterbitkan
+ *     untuk tagihan itu. Tanpa keduanya, ditolak.
+ *  2. Kepemilikan diperiksa di server: invoice.customer_id harus sama dengan
+ *     pelanggan yang login. Menebak-nebak nomor invoice orang lain tidak bisa.
+ *  3. Status (LUNAS / BELUM LUNAS) SELALU dibaca dari database. Tidak ada
+ *     parameter URL apa pun yang bisa mengubahnya — inilah yang mencegah
+ *     "?status=paid" menghasilkan invoice lunas palsu.
+ *  4. Setiap cetakan membawa kode verifikasi HMAC yang mengikat nomor,
+ *     nominal, dan status. Angka yang disunting di kertas tidak akan cocok
+ *     dengan kodenya saat admin memeriksa.
+ */
+router.get('/invoice/:invoiceId/print', (req, res) => {
+  const loginId = req.session && req.session.phone;
+  const publicToken = req.query.t;
+
+  if (!loginId && !publicToken) return res.redirect('/customer/login');
+
+  try {
+    const settings = getSettingsWithCache();
+    const inv = billingSvc.getInvoiceById(req.params.invoiceId);
+    if (!inv) return res.status(404).send('Tagihan tidak ditemukan');
+
+    // --- Verifikasi kepemilikan ---
+    let profile = null;
+    if (loginId) {
+      profile = findCustomerProfileByLoginId(loginId);
+      if (!profile || Number(inv.customer_id) !== Number(profile.id)) {
+        logger.warn(`[CetakInvoice] Ditolak: pelanggan ${profile ? profile.id : '?'} mencoba mencetak invoice #${inv.id} milik pelanggan ${inv.customer_id}.`);
+        return res.status(403).send('Anda tidak berhak mengakses tagihan ini.');
+      }
+    } else {
+      const tokenUtil = require('../utils/tokenUtil');
+      const payload = tokenUtil.verifyPublicToken(publicToken, settings.session_secret);
+      if (!payload || String(payload.invoiceId) !== String(inv.id)) {
+        return res.status(403).send('Token tidak valid atau sudah kedaluwarsa.');
+      }
+      profile = customerSvc.getCustomerById(inv.customer_id);
+      if (!profile) return res.status(404).send('Data pelanggan tidak ditemukan');
+    }
+
+    let pkg = null;
+    try {
+      if (profile.package_id) pkg = customerSvc.getPackageById(profile.package_id);
+    } catch (e) { /* opsional, invoice tetap tercetak tanpa ini */ }
+
+    return res.render('admin/print_invoice', {
+      invoice: inv,                       // status apa adanya dari database
+      customer: profile,
+      pkg,
+      company: settings.company_header || 'ALIJAYA DIGITAL NETWORK',
+      settings,
+      breakdown: invoiceRenderSvc.buildInvoiceLines(inv),
+      dueInfo: invoiceRenderSvc.buildDueInfo(inv, profile),
+      verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
+      issuedToCustomer: true              // memicu catatan keaslian di cetakan
+    });
+  } catch (e) {
+    logger.error('[CetakInvoice] ' + e.message);
+    return res.status(500).send('Gagal menyiapkan invoice.');
   }
 });
 
@@ -3419,8 +3442,7 @@ function adjustCustomerBalance(customerId, delta, note = '') {
 
 // Halaman PPOB & saldo untuk pelanggan (wajib login)
 router.get('/ppob', (req, res) => {
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  if (states['digiflazz'] !== 'visible') {
+  if (!isPpobEnabledForCustomer()) {
     return res.redirect('/customer');
   }
   const settings = getSettingsWithCache();
@@ -3481,8 +3503,10 @@ router.get('/ppob', (req, res) => {
 
 // Beli PPOB pakai saldo (wajib login)
 router.post('/ppob/buy', express.urlencoded({ extended: true }), async (req, res) => {
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  if (states['digiflazz'] !== 'visible') {
+  // Dijaga di sisi server juga, bukan hanya menyembunyikan tombol — form yang
+  // sudah terbuka di tab lain tidak boleh tetap bisa dikirim setelah fitur
+  // dimatikan.
+  if (!isPpobEnabledForCustomer()) {
     return res.redirect('/customer');
   }
   const redirectErr = (msg) => res.redirect('/customer/ppob?err=' + encodeURIComponent(msg));
@@ -3549,8 +3573,8 @@ router.post('/ppob/buy', express.urlencoded({ extended: true }), async (req, res
 
 // Halaman request top-up saldo pelanggan
 router.get('/topup', async (req, res) => {
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  if (states['digiflazz'] !== 'visible') {
+  // Saldo top-up hanya dipakai untuk PPOB, jadi ikut sakelar yang sama.
+  if (!isPpobEnabledForCustomer()) {
     return res.redirect('/customer');
   }
   const settings = getSettingsWithCache();
@@ -3560,42 +3584,9 @@ router.get('/topup', async (req, res) => {
 
   let paymentChannels = [];
   try {
-    const gateway = resolveConfiguredGateway(settings);
-    if (!gateway) {
-      paymentChannels = [];
-    } else if (gateway === 'tripay') {
-      paymentChannels = await paymentSvc.getTripayChannels();
-    } else if (gateway === 'midtrans') {
-      paymentChannels = [
-        { code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    } else if (gateway === 'xendit') {
-      paymentChannels = [
-        { code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    } else if (gateway === 'duitku') {
-      paymentChannels = [
-        { code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true },
-        { code: 'QRIS', name: 'QRIS', group: 'E-Wallet', active: true },
-        { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
-        { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
-      ];
-    }
+    // Nominal top-up belum ditentukan saat halaman dibuka, jadi pakai batas
+    // minimum form (Rp 10.000) sebagai acuan penyaringan kanal.
+    paymentChannels = await paymentSvc.resolvePaymentChannels(resolveConfiguredGateway(settings), 10000);
   } catch(e) {
     logger.error('[TopUp] Error fetching payment channels:', e.message);
     paymentChannels = [];
@@ -3615,8 +3606,8 @@ router.get('/topup', async (req, res) => {
 
 // Proses request top-up → redirect ke Payment Gateway
 router.post('/topup/create', express.urlencoded({ extended: true }), async (req, res) => {
-  const states = sidebarMenuSvc.getStoredMenuStates();
-  if (states['digiflazz'] !== 'visible') {
+  // Saldo top-up hanya dipakai untuk PPOB, jadi ikut sakelar yang sama.
+  if (!isPpobEnabledForCustomer()) {
     return res.redirect('/customer');
   }
   const settings = getSettingsWithCache();
