@@ -1056,15 +1056,22 @@ router.get('/voucher', async (req, res) => {
   const PAYMENT_CACHE_KEY = 'voucher_payment_channels_cache';
   const PAYMENT_CACHE_DURATION = 60 * 1000; // 1 menit (payment channels jarang berubah)
   
-  const getVoucherPaymentChannels = async () => {
+  /**
+   * @param {number} amount nominal terkecil yang mungkin dibeli. Dipakai untuk
+   *   menyaring kanal Duitku, karena tiap kanal punya batas minimum sendiri —
+   *   Virtual Account umumnya baru bisa dipakai mulai Rp 10.000, sementara
+   *   voucher termurah di sini Rp 2.000. Menampilkan kanal yang tidak mungkin
+   *   dipakai hanya membuat pembeli menemui error setelah menekan Bayar.
+   */
+  const getVoucherPaymentChannels = async (amount = 0) => {
     // Cek apakah ada gateway yang aktif
     const gateway = resolveVoucherGateway();
     if (!gateway) {
       return [];
     }
-    
+
     // Cek cache terlebih dahulu (skip jika PAYMENT_CACHE_DURATION = 0)
-    const cacheKey = `${PAYMENT_CACHE_KEY}_${gateway}`;
+    const cacheKey = `${PAYMENT_CACHE_KEY}_${gateway}_${Math.floor(Number(amount) || 0)}`;
     if (PAYMENT_CACHE_DURATION > 0) {
       const cached = global[cacheKey];
       if (cached && (Date.now() - cached.timestamp) < PAYMENT_CACHE_DURATION) {
@@ -1086,6 +1093,40 @@ router.get('/voucher', async (req, res) => {
         logger.warn('[Voucher] Tripay channels fetch failed or timeout: ' + e.message);
         channels = [];
       }
+    } else if (gateway === 'duitku' && Number(amount) > 0) {
+      // Duitku bisa ditanya kanal apa yang aktif untuk nominal tertentu.
+      // Memakainya berarti setiap pilihan yang tampil pasti bisa dibayar —
+      // tidak ada lagi "Payment channel not available" atau "di bawah batas
+      // minimum" setelah pembeli menekan Bayar.
+      try {
+        const avail = await Promise.race([
+          paymentSvc.getDuitkuPaymentMethods(amount),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
+        ]);
+        channels = (avail || []).map(m => ({
+          code: m.code,                       // kode asli Duitku, mis. SP / BC / M2
+          name: m.name,
+          group: /va|virtual/i.test(m.name) ? 'Virtual Account' : 'E-Wallet',
+          active: true,
+          total_fee: m.fee ? { flat: m.fee } : null
+        }));
+      } catch (e) {
+        logger.warn(`[Voucher] Gagal ambil kanal Duitku untuk Rp ${amount}: ${e.message}. Memakai daftar bawaan.`);
+        channels = [];
+      }
+      if (channels.length === 0) {
+        // Jaring pengaman bila API Duitku sedang tidak bisa dihubungi.
+        // "Semua Metode" sengaja tidak disertakan: Duitku v2 mewajibkan
+        // paymentMethod, jadi pilihan itu selalu ditolak HTTP 400.
+        channels = [
+          { code: 'QRIS', name: 'QRIS', group: 'QRIS', active: true },
+          { code: 'BCAVA', name: 'BCA Virtual Account', group: 'Virtual Account', active: true },
+          { code: 'BNIVA', name: 'BNI Virtual Account', group: 'Virtual Account', active: true },
+          { code: 'BRIVA', name: 'BRI Virtual Account', group: 'Virtual Account', active: true },
+          { code: 'PERMATAVA', name: 'Permata Virtual Account', group: 'Virtual Account', active: true },
+          { code: 'MANDIRIVA', name: 'Mandiri Virtual Account', group: 'Virtual Account', active: true }
+        ];
+      }
     } else {
       // Gateway lain tidak perlu query API, langsung return hardcoded
       const base = [
@@ -1098,7 +1139,6 @@ router.get('/voucher', async (req, res) => {
       ];
       if (gateway === 'midtrans') channels = [{ code: 'SNAP', name: 'Semua Metode (Snap)', group: 'E-Wallet', active: true }, ...base];
       else if (gateway === 'xendit') channels = [{ code: 'XENDIT', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
-      else if (gateway === 'duitku') channels = [{ code: 'DUITKU', name: 'Semua Metode', group: 'E-Wallet', active: true }, ...base];
       else channels = base;
     }
     
@@ -1114,18 +1154,25 @@ router.get('/voucher', async (req, res) => {
     return channels;
   };
 
-  // OPTIMASI UTAMA: Parallel execution untuk profiles dan payment channels
-  // Tidak perlu menunggu satu selesai baru eksekusi yang lain
-  const [profiles, paymentChannels] = await Promise.all([
-    getVoucherProfiles().catch(e => {
-      logger.error('[Voucher] Error getting profiles: ' + e.message);
-      return [];
-    }),
-    getVoucherPaymentChannels().catch(e => {
-      logger.error('[Voucher] Error getting payment channels: ' + e.message);
-      return [];
-    })
-  ]);
+  // Daftar paket diambil lebih dulu karena harga termurahnya menentukan kanal
+  // pembayaran mana yang boleh ditampilkan. Paket berasal dari database lokal,
+  // jadi tambahan waktunya tidak terasa.
+  const profiles = await getVoucherProfiles().catch(e => {
+    logger.error('[Voucher] Error getting profiles: ' + e.message);
+    return [];
+  });
+
+  // Pakai harga TERMURAH: kanal yang lolos di nominal terkecil pasti juga
+  // lolos di paket yang lebih mahal, sehingga satu daftar aman untuk semua.
+  const cheapestPrice = (profiles || [])
+    .map(p => Math.floor(Number(p.price) || 0))
+    .filter(n => n > 0)
+    .sort((a, b) => a - b)[0] || 0;
+
+  const paymentChannels = await getVoucherPaymentChannels(cheapestPrice).catch(e => {
+    logger.error('[Voucher] Error getting payment channels: ' + e.message);
+    return [];
+  });
 
   let order = null;
   let orderToken = null;
@@ -1432,8 +1479,12 @@ router.post('/public/voucher/create-payment', async (req, res) => {
       const allowed = new Set(['XENDIT', 'QRIS', 'BCAVA', 'BNIVA', 'BRIVA', 'PERMATAVA', 'MANDIRIVA']);
       if (!allowed.has(method)) method = 'XENDIT';
     } else if (gateway === 'duitku') {
-      const allowed = new Set(['DUITKU', 'QRIS', 'BCAVA', 'BNIVA', 'BRIVA', 'PERMATAVA', 'MANDIRIVA']);
-      if (!allowed.has(method)) method = 'DUITKU';
+      // Daftar kanal di halaman kini berasal langsung dari Duitku, berupa kode
+      // asli 2 karakter (SP, BC, M2, ...). Nama ramah lama tetap diterima demi
+      // halaman yang belum diperbarui. Selain itu, biarkan paymentService yang
+      // memilihkan kanal aktif.
+      const legacy = new Set(['QRIS', 'BCAVA', 'BNIVA', 'BRIVA', 'PERMATAVA', 'MANDIRIVA']);
+      if (!legacy.has(method) && !/^[A-Z0-9]{2}$/.test(method)) method = 'DUITKU';
     }
 
     const invoiceLike = {

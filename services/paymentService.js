@@ -355,10 +355,14 @@ async function getDuitkuPaymentMethods(amount) {
 /**
  * Terjemahkan pilihan metode di halaman kita menjadi kode kanal Duitku.
  *
- * Mengembalikan null untuk "Semua Metode" — pada Duitku v2, menghilangkan
- * paymentMethod membuat Duitku menampilkan halaman pemilihan kanalnya sendiri,
- * berisi kanal yang benar-benar aktif. Ini jalur paling tahan banting karena
- * tidak bergantung pada tebakan kita soal kanal mana yang disetujui.
+ * Halaman voucher kini mengambil daftar kanal langsung dari Duitku, jadi
+ * nilainya sudah berupa kode asli 2 huruf (SP, BC, M2, ...) dan cukup
+ * diteruskan apa adanya. Peta di bawah hanya untuk halaman lama yang masih
+ * memakai nama ramah seperti BCAVA.
+ *
+ * Mengembalikan null bila tidak bisa ditentukan — pemanggil wajib mengganti
+ * dengan kanal aktif, karena Duitku v2 menolak permintaan tanpa paymentMethod
+ * ("paymentMethod is mandatory").
  */
 function duitkuMethodCode(method) {
   const methodMap = {
@@ -371,7 +375,10 @@ function duitkuMethodCode(method) {
   };
   const key = String(method || '').trim().toUpperCase();
   if (!key || key === 'DUITKU' || key === 'ALL' || key === 'SEMUA') return null;
-  return methodMap[key] || null;
+  if (methodMap[key]) return methodMap[key];
+  // Kode asli Duitku selalu 2 karakter alfanumerik.
+  if (/^[A-Z0-9]{2}$/.test(key)) return key;
+  return null;
 }
 
 /**
@@ -420,12 +427,11 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     expiryPeriod: 1440 // 24 jam
   };
 
-  const channelCode = duitkuMethodCode(method);
+  let channelCode = duitkuMethodCode(method);
 
-  /** Satu kali percobaan inquiry. `code` null berarti biarkan Duitku yang memilih. */
+  /** Satu kali percobaan inquiry dengan kanal tertentu. */
   async function inquire(code) {
-    const body = { ...payload };
-    if (code) body.paymentMethod = code;
+    const body = { ...payload, paymentMethod: code };
     const res = await axios.post(baseUrl, body, {
       headers: { 'Content-Type': 'application/json' },
       timeout: 20000   // jangan menggantung bila Duitku lambat merespons
@@ -450,16 +456,33 @@ async function createDuitkuTransaction(invoice, customer, method = 'duitku', app
     return err.response.status === 404 || /channel not available|not available|not enabled/i.test(text);
   }
 
+  // Duitku v2 mewajibkan paymentMethod. Bila pilihan tidak bisa dipetakan
+  // (mis. "Semua Metode"), ambil kanal pertama yang benar-benar aktif untuk
+  // nominal ini daripada menebak kode yang mungkin belum disetujui.
+  if (!channelCode) {
+    const avail = await getDuitkuPaymentMethods(amount);
+    if (!avail.length) {
+      const m = `Tidak ada kanal Duitku yang aktif untuk nominal Rp ${amount} (kemungkinan di bawah batas minimum).`;
+      logger.error(`[Duitku] ${m} (order=${orderId})`);
+      throw new Error('Duitku Error: ' + m);
+    }
+    channelCode = avail[0].code;
+    logger.info(`[Duitku] Metode "${method}" tidak spesifik — memakai kanal aktif pertama: ${avail[0].name} (${channelCode}).`);
+  }
+
   try {
     return await inquire(channelCode);
   } catch (error) {
-    // Kanal spesifik ditolak? Coba sekali lagi tanpa menentukan kanal, supaya
-    // Duitku menampilkan halaman pemilihannya sendiri. Pembeli tetap bisa
-    // membayar walau kanal favoritnya belum diaktifkan di akun merchant.
-    if (channelCode && isChannelUnavailable(error)) {
-      logger.warn(`[Duitku] Kanal ${channelCode} (${method}) tidak tersedia untuk Rp ${amount}. Beralih ke halaman pilihan Duitku.`);
+    // Kanal yang diminta ditolak? Coba kanal lain yang Duitku nyatakan aktif
+    // untuk nominal ini, supaya pembeli tidak menemui jalan buntu.
+    if (isChannelUnavailable(error)) {
+      logger.warn(`[Duitku] Kanal ${channelCode} (${method}) tidak tersedia untuk Rp ${amount}. Mencari kanal pengganti...`);
       try {
-        return await inquire(null);
+        const alt = (await getDuitkuPaymentMethods(amount)).find(a => a.code !== channelCode);
+        if (alt) {
+          logger.warn(`[Duitku] Beralih ke ${alt.name} (${alt.code}).`);
+          return await inquire(alt.code);
+        }
       } catch (e2) {
         error = e2;
       }
