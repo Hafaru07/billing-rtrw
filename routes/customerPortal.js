@@ -1501,8 +1501,41 @@ router.post('/public/voucher/create-payment', async (req, res) => {
 
     return res.redirect(result.link);
   } catch (e) {
-    logger.error('[PublicVoucher] Create payment error: ' + (e?.message || e));
-    return res.redirect('/customer/voucher?err=' + encodeURIComponent('Gagal membuat pembayaran. Silakan coba lagi.'));
+    const raw = String(e?.message || e || '');
+
+    // gateway/method/selected/orderId dideklarasikan di dalam blok try, jadi
+    // TIDAK terlihat dari sini bila error terjadi sebelum baris deklarasinya.
+    // Mengaksesnya langsung akan melempar ReferenceError dan menutupi error
+    // aslinya. `typeof` aman untuk nama yang memang tidak terdeklarasi.
+    const vGateway = (typeof gateway !== 'undefined') ? gateway : '-';
+    const vMethod  = (typeof method  !== 'undefined') ? method  : '-';
+    const vOrderId = (typeof orderId !== 'undefined') ? orderId : '-';
+    const vPrice   = (typeof selected !== 'undefined' && selected) ? Number(selected.price || 0) : 0;
+
+    // Catat selengkap mungkin ke log supaya admin bisa menelusuri.
+    logger.error(
+      `[PublicVoucher] Gagal membuat pembayaran ` +
+      `(gateway=${vGateway}, metode=${vMethod}, nominal=${vPrice}, order=${vOrderId}): ${raw}`
+    );
+
+    // Terjemahkan penyebab teknis menjadi kalimat yang bisa ditindaklanjuti.
+    // Pesan gateway aman ditampilkan — tidak memuat API key.
+    let userMsg;
+    if (/minimum/i.test(raw)) {
+      userMsg = `Nominal Rp ${vPrice.toLocaleString('id-ID')} di bawah batas minimum metode pembayaran ini. Pilih metode lain (mis. QRIS) atau naikkan harga voucher.`;
+    } else if (/not enabled|belum aktif|not active/i.test(raw)) {
+      userMsg = 'Metode pembayaran ini belum aktif di akun payment gateway Anda.';
+    } else if (/ENOTFOUND|EAI_AGAIN|tidak dapat dijangkau/i.test(raw)) {
+      userMsg = 'Server pembayaran tidak dapat dijangkau. Periksa koneksi internet server.';
+    } else if (/timeout|ECONNABORTED/i.test(raw)) {
+      userMsg = 'Server pembayaran tidak merespons. Coba lagi sebentar.';
+    } else if (/signature|unauthor|invalid merchant/i.test(raw)) {
+      userMsg = 'Kredensial payment gateway ditolak. Periksa Merchant Code / API Key di Pengaturan.';
+    } else {
+      userMsg = 'Gagal membuat pembayaran: ' + raw.replace(/^.*?Error:\s*/i, '').slice(0, 180);
+    }
+
+    return res.redirect('/customer/voucher?err=' + encodeURIComponent(userMsg));
   }
 });
 
