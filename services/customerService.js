@@ -157,9 +157,16 @@ function createCustomer(data) {
 }
 
 function updateCustomer(id, data) {
-  const prev = db.prepare('SELECT package_id FROM customers WHERE id=?').get(id);
+  const prev = db.prepare('SELECT package_id, cable_path FROM customers WHERE id=?').get(id);
   const newPkgId = data.package_id ? parseInt(data.package_id, 10) : null;
   const pkgChanged = prev && Number(prev.package_id || 0) !== Number(newPkgId || 0);
+
+  // cable_path (jalur kabel di peta jaringan) digambar lewat halaman peta, dan
+  // TIDAK pernah ikut di form edit pelanggan maupun file import. Bila pemanggil
+  // tidak menyebut field ini, nilainya harus dipertahankan — versi sebelumnya
+  // selalu menulis `data.cable_path || null`, sehingga sekali admin menyimpan
+  // form edit atau menjalankan import, seluruh jalur kabel terhapus dari peta.
+  const cablePath = (data.cable_path === undefined) ? (prev ? prev.cable_path : null) : (data.cable_path || null);
 
   const result = db.prepare(`
     UPDATE customers SET name=?, phone=?, email=?, address=?, package_id=?, router_id=?, olt_id=?, odp_id=?, pon_port=?, lat=?, lng=?, genieacs_tag=?, pppoe_username=?, pppoe_password=?, pppoe_remote_address=?, isolir_profile=?, status=?, install_date=?, notes=?, auto_isolate=?, isolate_day=?, cable_path=?, connection_type=?, static_ip=?, mac_address=?, hotspot_username=?, hotspot_password=?, hotspot_profile=?, collector_id=?
@@ -181,7 +188,7 @@ function updateCustomer(id, data) {
     data.install_date || null, data.notes || '',
     data.auto_isolate !== undefined ? parseInt(data.auto_isolate) : 1,
     data.isolate_day !== undefined ? parseInt(data.isolate_day) : 10,
-    data.cable_path || null,
+    cablePath,
     data.connection_type || 'pppoe',
     data.static_ip || '',
     data.mac_address || '',

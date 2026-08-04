@@ -33,6 +33,80 @@
     </div>
     <% } %>
 
+    <%
+      // ── Laporan hasil import ────────────────────────────────────────────
+      // Ditampilkan lengkap per baris. Versi lama hanya menulis "Berhasil
+      // mengimpor N data" tanpa memeriksa apakah datanya benar-benar tersimpan,
+      // sehingga baris yang gagal lenyap tanpa jejak.
+    %>
+    <% if (locals.importReport) { const rep = locals.importReport; %>
+    <div class="card" style="margin-bottom:16px;border:1px solid <%= rep.gagal > 0 ? 'rgba(239,68,68,.45)' : 'rgba(34,197,94,.45)' %>">
+      <div class="card-hd">
+        <h6>
+          <i class="bi bi-<%= rep.gagal > 0 ? 'exclamation-triangle' : 'check2-circle' %>"></i>
+          Hasil Import<%= rep.simulasi ? ' (Simulasi — belum disimpan)' : '' %>
+        </h6>
+        <button class="btn btn-g btn-sm" onclick="this.closest('.card').remove()">Tutup</button>
+      </div>
+      <div class="card-bd">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="badge" style="background:rgba(148,163,184,.18);color:#e2e8f0;padding:6px 12px;border-radius:8px">
+            <%= rep.total %> baris dibaca
+          </span>
+          <span class="badge" style="background:rgba(34,197,94,.18);color:#bbf7d0;padding:6px 12px;border-radius:8px">
+            <%= rep.dibuat %> <%= rep.simulasi ? 'akan dibuat' : 'dibuat' %>
+          </span>
+          <span class="badge" style="background:rgba(59,130,246,.18);color:#bfdbfe;padding:6px 12px;border-radius:8px">
+            <%= rep.diperbarui %> <%= rep.simulasi ? 'akan diperbarui' : 'diperbarui' %>
+          </span>
+          <span class="badge" style="background:rgba(239,68,68,.18);color:#fecaca;padding:6px 12px;border-radius:8px">
+            <%= rep.gagal %> gagal
+          </span>
+        </div>
+
+        <% if (rep.gagal > 0) { %>
+          <div style="font-size:12px;color:#fca5a5;margin-bottom:10px">
+            <i class="bi bi-info-circle"></i>
+            Perbaiki baris di bawah ini pada berkas Excel Anda, lalu unggah ulang.
+            Baris yang berhasil tidak akan terduplikasi.
+          </div>
+        <% } %>
+
+        <div style="overflow-x:auto;max-height:420px;overflow-y:auto">
+          <table class="tbl" style="width:100%;font-size:12.5px">
+            <thead>
+              <tr>
+                <th style="width:70px">Baris</th>
+                <th style="width:190px">Nama</th>
+                <th style="width:120px">Status</th>
+                <th>Keterangan</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% rep.baris.filter(b => b.status === 'gagal' || b.pesan).forEach(function(b){ %>
+                <tr>
+                  <td><%= b.baris %></td>
+                  <td><%= b.nama %></td>
+                  <td>
+                    <% if (b.status === 'gagal') { %>
+                      <span style="color:#fca5a5;font-weight:700">Gagal</span>
+                    <% } else { %>
+                      <span style="color:#bbf7d0"><%= b.status %></span>
+                    <% } %>
+                  </td>
+                  <td style="color:var(--muted)"><%= b.pesan %></td>
+                </tr>
+              <% }) %>
+              <% if (rep.baris.filter(b => b.status === 'gagal' || b.pesan).length === 0) { %>
+                <tr><td colspan="4" style="color:var(--muted)">Semua baris bersih — tidak ada yang perlu diperbaiki.</td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <% } %>
+
     <!-- Stats -->
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
       <div class="sc p"><i class="bi bi-people sc-icon"></i><div class="sc-label"><%= t('admin.customers.stats.total', 'Total') %></div><div class="sc-val"><%= stats.total %></div></div>
@@ -46,6 +120,7 @@
       <div class="card-hd">
         <h6><i class="bi bi-people"></i> <%= t('admin.customers.list', 'Daftar Pelanggan') %> (<%= customers.length %>)</h6>
         <div style="display:flex;gap:8px">
+          <a href="/admin/customers/template" class="btn btn-g btn-sm" title="Template kosong untuk menambah pelanggan baru"><i class="bi bi-file-earmark-plus"></i> Template Import</a>
           <a href="/admin/customers/export" class="btn btn-g btn-sm"><i class="bi bi-file-earmark-excel"></i> <%= t('admin.customers.export_excel', 'Export Excel') %></a>
           <button class="btn btn-g btn-sm" onclick="openModal('importModal')"><i class="bi bi-file-earmark-arrow-up"></i> <%= t('admin.customers.import_excel', 'Import Excel') %></button>
           <button class="btn btn-p btn-sm" onclick="openModal('addModal')"><i class="bi bi-plus-lg"></i> <%= t('admin.customers.add', 'Tambah Pelanggan') %></button>
@@ -378,15 +453,43 @@
     <div class="mh"><span class="mt"><i class="bi bi-file-earmark-arrow-up"></i> Import Pelanggan</span><button class="mc" onclick="closeModal('importModal')">&times;</button></div>
     <form method="POST" action="/admin/customers/import" enctype="multipart/form-data">
       <div class="mbody">
-        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
-          Unggah file Excel (.xlsx). Pastikan format kolom sesuai dengan hasil Export.
-          <br><br>
-          <a href="/admin/customers/export" style="color:var(--primary);text-decoration:none"><i class="bi bi-download"></i> Unduh format excel</a>
-        </p>
+        <div style="background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.35);border-radius:10px;padding:12px;margin-bottom:16px">
+          <div style="font-size:12.5px;font-weight:700;margin-bottom:8px"><i class="bi bi-download"></i> Pilih berkas awal</div>
+          <div style="margin-bottom:8px">
+            <a href="/admin/customers/template" style="color:var(--primary);text-decoration:none;font-weight:600">Template kosong</a>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.6">
+              Untuk <b>menambah</b> pelanggan baru. Kolom ID sengaja dikosongkan, dan
+              ada lembar Petunjuk berisi daftar Paket &amp; Router yang benar.
+            </div>
+          </div>
+          <div>
+            <a href="/admin/customers/export" style="color:var(--primary);text-decoration:none;font-weight:600">Export data saat ini</a>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.6">
+              Untuk <b>memperbarui</b> data yang sudah ada. Kolom ID terisi — jangan diubah.
+            </div>
+          </div>
+        </div>
+
+        <div style="background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.35);border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:11.5px;line-height:1.65;color:#fde68a">
+          <i class="bi bi-exclamation-triangle"></i>
+          Kolom <b>ID</b> menentukan segalanya: <b>kosong = tambah baru</b>,
+          <b>terisi = perbarui pelanggan itu</b>. Mengisi ID yang belum ada akan
+          ditolak dengan pesan yang jelas, bukan dilewati diam-diam.
+        </div>
+
         <div class="fg">
           <label class="fl">Pilih File Excel</label>
-          <input type="file" name="file" class="fc" accept=".xlsx" required>
+          <input type="file" name="file" class="fc" accept=".xlsx,.xls" required>
         </div>
+
+        <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;cursor:pointer">
+          <input type="checkbox" name="simulasi" value="1" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--muted);line-height:1.6">
+            <b style="color:var(--fg)">Periksa dulu tanpa menyimpan</b><br>
+            Menampilkan hasilnya baris per baris supaya kesalahan ketahuan sebelum
+            data benar-benar masuk. Disarankan untuk berkas besar.
+          </span>
+        </label>
       </div>
       <div class="mf">
         <button type="button" class="btn btn-g" onclick="closeModal('importModal')">Batal</button>

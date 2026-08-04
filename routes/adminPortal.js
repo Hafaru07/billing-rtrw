@@ -15,6 +15,7 @@ const adminSvc = require('../services/adminService');
 const agentSvc = require('../services/agentService');
 const oltSvc = require('../services/oltService');
 const odpSvc = require('../services/odpService');
+const importSvc = require('../services/customerImportService');
 const { pickQrisUniqueAmount, qrisRangeFullMessage } = require('../utils/qrisUnique');
 const serverSvc = require('../services/serverService');
 const poleSvc = require('../services/poleService');
@@ -1855,9 +1856,14 @@ router.get('/customers', requireAdminSession, requireSidebarMenuAccess('customer
   const odps = odpSvc.getAllOdps();
   const collectors = adminSvc.getAllCollectors();
 
+  // Laporan hasil import ditampilkan sekali lalu dibuang, seperti pesan flash.
+  const importReport = req.session._importReport || null;
+  if (req.session._importReport) delete req.session._importReport;
+
   res.render('admin/customers', {
     title: 'Data Pelanggan', company: company(), activePage: 'customers',
     customers, stats, packages, routers, olts, odps, collectors, search, filterStatus, selectedRouterId, msg: flashMsg(req),
+    importReport,
     settings: getSettings()
   });
 });
@@ -2309,83 +2315,115 @@ router.get('/customers/export', requireAdminSession, (req, res) => {
   }
 });
 
+/**
+ * Template import KOSONG.
+ *
+ * Sebelumnya tautan "Unduh format excel" mengarah ke /customers/export, yang
+ * berisi data lama LENGKAP DENGAN KOLOM ID. Admin yang menambah baris baru di
+ * file itu ikut membawa kolom ID, sehingga barisnya masuk ke jalur "perbarui"
+ * dan hilang tanpa pesan karena ID-nya belum ada.
+ *
+ * Template ini sengaja mengosongkan kolom ID, dan menyertakan lembar petunjuk
+ * berisi daftar Paket / Router / ODP yang benar-benar ada — supaya admin tidak
+ * perlu menebak ejaannya.
+ */
+router.get('/customers/template', requireAdminSession, (req, res) => {
+  try {
+    const packages = customerSvc.getAllPackages() || [];
+    const routers = mikrotikService.getAllRouters() || [];
+    const odps = odpSvc.getAllOdps() || [];
+
+    const contohPaket = packages[0] ? packages[0].name : 'P-Lite';
+    const contohRouter = routers[0] ? routers[0].name : '';
+
+    const contoh = [
+      {
+        'ID': '', 'Nama': 'Budi Santoso', 'Telepon': '081234567890',
+        'Email': '', 'Alamat': 'Jl. Melati No. 10 RT.01 RW.02',
+        'Paket': contohPaket, 'Router': contohRouter, 'Tipe Koneksi': 'pppoe',
+        'Tag ONU': '', 'PPPoE Username': 'budi01', 'Hotspot Username': '',
+        'Static IP': '', 'Isolir Profile': 'isolir', 'Status': 'active',
+        'Tanggal Pasang': '2026-08-01', 'Auto Isolir': 'YA', 'Tgl Isolir': 10,
+        'ODP': '', 'Latitude': '', 'Longitude': '', 'Catatan': 'Baris contoh — silakan hapus'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(contoh, { header: importSvc.HEADER_TEMPLATE });
+    ws['!cols'] = importSvc.HEADER_TEMPLATE.map(h => ({ wch: Math.max(14, h.length + 2) }));
+
+    const petunjuk = [
+      ['CARA MENGISI TEMPLATE IMPORT PELANGGAN'],
+      [''],
+      ['1. Hapus baris contoh, lalu isi data Anda mulai baris ke-2.'],
+      ['2. Kolom ID DIKOSONGKAN untuk pelanggan BARU.'],
+      ['   Isi kolom ID hanya bila ingin MEMPERBARUI pelanggan yang sudah ada'],
+      ['   (ambil ID-nya dari tombol Export Excel).'],
+      ['3. Kolom WAJIB: Nama, Paket, dan username sesuai Tipe Koneksi.'],
+      ['4. Nomor telepon sebaiknya diketik sebagai TEKS agar angka 0 di depan'],
+      ['   tidak dihapus Excel. Kalau terlanjur hilang, sistem akan memulihkannya.'],
+      ['5. Tanggal Pasang: format 2026-08-31 (tahun-bulan-tanggal).'],
+      ['6. Auto Isolir: YA atau TIDAK. Tgl Isolir: angka 1 sampai 31.'],
+      ['7. Tipe Koneksi: pppoe, hotspot, atau static.'],
+      ['8. Status: active, suspended, atau inactive.'],
+      [''],
+      ['PAKET YANG TERSEDIA (tulis persis seperti ini):'],
+      ...(packages.length ? packages.map(p => ['  ' + p.name]) : [['  (belum ada paket — buat dulu di menu Paket Internet)']]),
+      [''],
+      ['ROUTER YANG TERSEDIA:'],
+      ...(routers.length ? routers.map(r => ['  ' + r.name]) : [['  (belum ada router)']]),
+      [''],
+      ['ODP YANG TERSEDIA (opsional, boleh dikosongkan):'],
+      ...(odps.length ? odps.map(o => ['  ' + o.name]) : [['  (belum ada ODP)']])
+    ];
+    const wsPetunjuk = XLSX.utils.aoa_to_sheet(petunjuk);
+    wsPetunjuk['!cols'] = [{ wch: 72 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pelanggan');
+    XLSX.utils.book_append_sheet(wb, wsPetunjuk, 'Petunjuk');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=template_import_pelanggan.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (e) {
+    logger.error('[Import] Gagal membuat template: ' + e.message);
+    res.status(500).send('Gagal membuat template.');
+  }
+});
+
 router.post('/customers/import', requireAdminSession, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) throw new Error('File tidak ditemukan');
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws);
-    logger.info(`[Import] Found ${rows.length} rows in Excel file.`);
-    
-    const packages = customerSvc.getAllPackages();
-    const odps = odpSvc.getAllOdps();
-    const routers = mikrotikService.getAllRouters();
-    let count = 0;
 
-    for (let row of rows) {
-      // Normalize row keys (trim whitespace)
-      const cleanRow = {};
-      Object.keys(row).forEach(key => {
-        cleanRow[key.trim()] = row[key];
-      });
+    // cellDates: tanggal dibaca sebagai objek Date, bukan angka serial Excel.
+    // raw: false — nilai dibaca apa adanya sesuai tampilan, sehingga nomor
+    // telepon berformat teks tidak berubah menjadi notasi ilmiah.
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true, raw: false });
 
-      const name = cleanRow['Nama'] || cleanRow['name'] || cleanRow['Name'];
-      if (!name) {
-        logger.debug('[Import] Skipping row - Name is empty.');
-        continue; 
-      }
+    // Utamakan lembar bernama "Pelanggan"; kalau tidak ada, pakai yang pertama.
+    const namaSheet = wb.SheetNames.find(n => /pelanggan|customer/i.test(n)) || wb.SheetNames[0];
+    const ws = wb.Sheets[namaSheet];
+    if (!ws) throw new Error('File Excel tidak berisi lembar data.');
 
-      const pkgName = cleanRow['Paket'] || cleanRow['package'] || cleanRow['Package'];
-      const pkg = packages.find(p => p.name === pkgName);
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (rows.length === 0) throw new Error('Lembar "' + namaSheet + '" kosong — tidak ada baris untuk diimpor.');
 
-      const odpName = cleanRow['ODP'] || cleanRow['odp'] || cleanRow['ODP Name'];
-      const odp = odps.find(o => o.name === odpName);
-      
-      // ✅ Handle Router field
-      const routerName = cleanRow['Router'] || cleanRow['router'] || cleanRow['Router Name'];
-      const router = routers.find(r => r.name === routerName);
-      
-      // ✅ NEW: Handle Connection Type
-      const connType = String(cleanRow['Tipe Koneksi'] || cleanRow['connection_type'] || cleanRow['Connection Type'] || 'pppoe').trim().toLowerCase() || 'pppoe';
-      
-      const data = {
-        name: name,
-        phone: cleanRow['Telepon'] || cleanRow['phone'] || cleanRow['Phone'],
-        email: cleanRow['Email'] || cleanRow['email'] || cleanRow['email_address'],
-        address: cleanRow['Alamat'] || cleanRow['address'] || cleanRow['Address'],
-        package_id: pkg ? pkg.id : null,
-        router_id: router ? router.id : null,
-        odp_id: odp ? odp.id : null,
-        lat: cleanRow['Latitude'] || cleanRow['latitude'] || cleanRow['Lat'] || '',
-        lng: cleanRow['Longitude'] || cleanRow['longitude'] || cleanRow['Lng'] || '',
-        genieacs_tag: cleanRow['Tag ONU'] || cleanRow['genieacs_tag'],
-        pppoe_username: connType === 'pppoe' ? (cleanRow['PPPoE Username'] || cleanRow['pppoe_username'] || '') : '',
-        hotspot_username: connType === 'hotspot' ? (cleanRow['Hotspot Username'] || cleanRow['hotspot_username'] || '') : '',
-        static_ip: connType === 'static' ? (cleanRow['Static IP'] || cleanRow['static_ip'] || '') : '',
-        connection_type: connType,
-        isolir_profile: cleanRow['Isolir Profile'] || cleanRow['isolir_profile'] || 'isolir',
-        status: (cleanRow['Status'] || cleanRow['status'] || 'active').toLowerCase(),
-        install_date: cleanRow['Tanggal Pasang'] || cleanRow['install_date'],
-        auto_isolate: (cleanRow['Auto Isolir'] === 'TIDAK' || cleanRow['auto_isolate'] === 0) ? 0 : 1,
-        isolate_day: parseInt(cleanRow['Tgl Isolir'] || cleanRow['isolate_day']) || 10,
-        notes: cleanRow['Catatan'] || cleanRow['notes']
-      };
-      
-      const id = cleanRow['ID'] || cleanRow['id'];
-      if (id && !isNaN(id) && id !== '') {
-        logger.info(`[Import] Updating customer ID: ${id}`);
-        customerSvc.updateCustomer(id, data);
-      } else {
-        logger.info(`[Import] Creating new customer: ${name}`);
-        customerSvc.createCustomer(data);
-      }
-      count++;
-    }
-    
-    logger.info(`[Import] Finished. Total processed: ${count}`);
-    req.session._msg = { type: 'success', text: `Berhasil mengimpor ${count} data pelanggan.` };
+    const simulasi = String(req.body && req.body.simulasi || '') === '1';
+    const laporan = importSvc.importCustomers(rows, { simulasi });
+
+    req.session._importReport = { ...laporan, simulasi, sheet: namaSheet };
+
+    const ringkas = simulasi
+      ? `Simulasi: ${laporan.dibuat} akan dibuat, ${laporan.diperbarui} akan diperbarui, ${laporan.gagal} bermasalah. Belum ada data yang disimpan.`
+      : `${laporan.dibuat} pelanggan dibuat, ${laporan.diperbarui} diperbarui, ${laporan.gagal} gagal.`;
+
+    req.session._msg = {
+      type: laporan.gagal > 0 ? 'error' : 'success',
+      text: ringkas + (laporan.gagal > 0 ? ' Lihat rincian di bawah.' : '')
+    };
   } catch (e) {
-    logger.error('Import error:', e);
+    logger.error('[Import] ' + (e.message || e));
     req.session._msg = { type: 'error', text: 'Gagal impor: ' + e.message };
   }
   res.redirect('/admin/customers');
