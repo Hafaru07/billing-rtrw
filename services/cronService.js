@@ -161,16 +161,64 @@ function isPermanentError(errorMessage) {
 }
 
 // Helper: Message variation untuk menghindari spam detection
+/**
+ * Buat tiap pesan sedikit berbeda supaya tidak terbaca sebagai kiriman massal
+ * yang identik.
+ *
+ * Versi lama menempelkan tanda baca yang terlihat — "_", "•", "▪" — di akhir
+ * pesan. Fungsinya jalan, tapi hasilnya muncul di layar pelanggan sebagai
+ * karakter nyasar yang terlihat seperti salah ketik, dan justru menurunkan
+ * kesan profesional yang ingin dijaga.
+ *
+ * Sekarang memakai ZERO WIDTH SPACE (U+200B): tidak tampak sama sekali di
+ * WhatsApp, tetapi tetap mengubah isi pesan sehingga sidik jarinya berbeda.
+ */
 function addMessageVariation(message, index) {
-  const variations = [
-    '',
-    '\n\n_',
-    '\n\n•',
-    '\n\n▪',
-    '\n\n▫'
-  ];
-  const suffix = variations[index % variations.length];
-  return message + suffix;
+  const ZWSP = '​';
+  return message + ZWSP.repeat(index % 5);
+}
+
+/**
+ * Isi variabel template pengingat.
+ *
+ * Dipakai jalur teks MAUPUN caption gambar QRIS, supaya satu template di panel
+ * admin menghasilkan pesan yang sama bentuknya di kedua jalur.
+ *
+ * Variabel QRIS ({{qris_nominal}}, {{qris_kode}}, {{qris_qr}}) tetap dikenali
+ * walau QRIS sedang mati — diganti tanda '-' atau dikosongkan, supaya template
+ * yang memakainya tidak pernah menyisakan tulisan "{{qris_nominal}}" mentah di
+ * layar pelanggan.
+ */
+function fillReminderTemplate(template, data) {
+  const rupiah = (n) => Number(n || 0).toLocaleString('id-ID');
+
+  const nilai = {
+    nama: data.nama || 'Pelanggan',
+    paket: data.paket || '-',
+    tagihan: rupiah(data.tagihan),
+    rincian: data.rincian || '-',
+    periode: data.periode || data.rincian || '-',
+    jatuhtempo: data.jatuhtempo || '-',
+    link: data.link || '',
+    qris_nominal: data.qrisAmount > 0 ? rupiah(data.qrisAmount) : '-',
+    qris_kode: data.qrisCode > 0 ? String(data.qrisCode) : '-',
+    qris_qr: data.qrisImageUrl || ''
+  };
+
+  let hasil = String(template || '');
+  for (const [kunci, isi] of Object.entries(nilai)) {
+    hasil = hasil.replace(new RegExp(`{{\\s*${kunci}\\s*}}`, 'gi'), isi);
+  }
+
+  // Jaring pengaman: variabel yang salah ketik di panel admin tidak boleh
+  // bocor mentah-mentah ke pelanggan.
+  const tersisa = hasil.match(/{{\s*[\w.]+\s*}}/g);
+  if (tersisa) {
+    logger.warn(`[CRON] Variabel tidak dikenal di template pengingat: ${[...new Set(tersisa)].join(', ')} — dikosongkan.`);
+    hasil = hasil.replace(/{{\s*[\w.]+\s*}}/g, '');
+  }
+
+  return addMessageVariation(hasil, data.variationIndex || 0);
 }
 
 // ─── PENGINGAT TAGIHAN: PENANDA TERKIRIM & RESUME ──────────────────────────
@@ -437,20 +485,18 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
     `Mohon segera melakukan pembayaran melalui portal pelanggan: {{link}}\n\n` +
     `Terima kasih atas kerja samanya.\n` +
     `Salam,\nAdmin ${getSetting('company_header', 'ISP')}`;
+  // SATU template untuk pengingat otomatis: isi textarea "Isi Pesan WhatsApp"
+  // di halaman Broadcast WhatsApp.
+  //
+  // Sebelumnya, saat QRIS aktif, cron mengambil `whatsapp_billing_qris_message`
+  // — kunci milik tombol kirim manual, yang di panel admin pun berlabel
+  // "Template Tagihan QRIS (Manual)". Akibatnya pengingat pagi hari berubah
+  // menjadi lembar tagihan: tidak menyebut jatuh tempo, dan template pengingat
+  // yang sudah admin susun tidak pernah terpakai.
+  //
+  // Sekarang template yang sama dipakai untuk kedua jalur — teks maupun caption
+  // gambar QR — sehingga apa yang diketik admin di panel itulah yang terkirim.
   const template = String(db.getAppSetting('whatsapp_auto_billing_message', defaultTemplate) || defaultTemplate);
-
-  // Template khusus saat QRIS aktif — sama dengan yang dipakai tombol kirim manual,
-  // sehingga pesan otomatis dan manual konsisten.
-  const defaultQrisTemplate =
-    `Yth. Pelanggan {{nama}},\n\n` +
-    `Berikut rincian tagihan + Kode Bayar QRIS Anda:\n\n` +
-    `📦 *Paket:* {{paket}}\n` +
-    `📅 *Periode:* {{periode}}\n` +
-    `💰 *Nominal:* Rp {{qris_nominal}}\n\n` +
-    `Silakan scan QRIS pada gambar di atas — nominal sudah otomatis terisi, ` +
-    `tinggal konfirmasi pembayaran.\n\n` +
-    `Terima kasih.`;
-  const templateQris = String(db.getAppSetting('whatsapp_billing_qris_message', defaultQrisTemplate) || defaultQrisTemplate);
 
   // QRIS hanya dipakai bila admin sudah mengaturnya di Pengaturan
   const settingsNow = getSettings();
@@ -500,30 +546,43 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
           let ok = false;
 
           // ── Jalur QRIS: kirim gambar QR dinamis dengan nominal tertanam ──
-          // Pelanggan cukup memindai, nominal + kode unik sudah terisi otomatis
-          // sehingga pembayaran bisa dicocokkan sistem tanpa ketik manual.
-          if (qrisReady && unpaidInvoices.length > 0) {
+          //
+          // Hanya dipakai bila pelanggan punya TEPAT SATU tagihan belum lunas.
+          // Pencocokan pembayaran otomatis bekerja dengan mencari invoice yang
+          // qris_amount_unique-nya sama persis dengan nominal masuk, jadi satu
+          // QR hanya bisa mewakili satu invoice. Bila tunggakannya lebih dari
+          // satu, mengirim QR untuk yang tertua sementara teksnya menyebut
+          // total akan membuat pelanggan membayar angka yang tidak cocok —
+          // dan pembayarannya tidak akan terdeteksi. Untuk kasus itu, pesan
+          // dikirim sebagai teks berisi total beserta tautan portal.
+          const bolehQris = qrisReady && unpaidInvoices.length === 1;
+
+          if (bolehQris) {
             try {
-              // Tagih invoice tertua yang belum lunas
               const inv = unpaidInvoices[0];
               const unique = ensureInvoiceQrisAmount(inv);
 
               if (unique && unique.amount > 0) {
                 const jpg = await qrisSvc.buildDynamicQrisJpg(settingsNow, unique.amount);
                 if (jpg) {
-                  let caption = templateQris
-                    .replace(/{{nama}}/gi, c.name || 'Pelanggan')
-                    .replace(/{{periode}}/gi, formatPeriod(inv.period_month, inv.period_year))
-                    .replace(/{{paket}}/gi, c.package_name || '-')
-                    .replace(/{{qris_nominal}}/gi, Number(unique.amount).toLocaleString('id-ID'))
-                    .replace(/{{qris_kode}}/gi, String(unique.code))
-                    .replace(/{{tagihan}}/gi, totalTagihan.toLocaleString('id-ID'))
-                    .replace(/{{rincian}}/gi, rincianBulan || '-')
-                    .replace(/{{link}}/gi, loginLink)
-                    .replace(/{{jatuhtempo}}/gi, jatuhTempo)
-                    .replace(/{{qris_qr}}/gi, '');
+                  // {{tagihan}} sengaja diisi nominal unik, BUKAN nominal dasar.
+                  // Inilah angka yang tertanam di QR dan yang harus dibayar agar
+                  // pencocokan otomatis berhasil; menampilkan angka bulat di teks
+                  // justru menuntun pelanggan membayar jumlah yang salah.
+                  const caption = fillReminderTemplate(template, {
+                    nama: c.name,
+                    paket: c.package_name,
+                    tagihan: unique.amount,
+                    rincian: rincianBulan,
+                    periode: formatPeriod(inv.period_month, inv.period_year),
+                    jatuhtempo: jatuhTempo,
+                    link: loginLink,
+                    qrisAmount: unique.amount,
+                    qrisCode: unique.code,
+                    qrisImageUrl: `${resolvePortalBaseUrl()}/customer/qris/static.jpg?amount=${encodeURIComponent(String(unique.amount))}`,
+                    variationIndex: i
+                  });
 
-                  caption = addMessageVariation(caption, i);
                   ok = await sendWAImage(targetPhone, jpg, caption);
                 }
               }
@@ -532,19 +591,23 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
               // jatuh ke pesan teks biasa di bawah.
               logger.warn(`[CRON] QRIS gagal untuk ${c.name}: ${e.message}. Kirim sebagai teks.`);
             }
+          } else if (qrisReady && unpaidInvoices.length > 1) {
+            logger.info(`[CRON] ${c.name}: ${unpaidInvoices.length} tagihan belum lunas — dikirim sebagai teks (satu QR tidak bisa mewakili semuanya).`);
           }
 
-          // ── Jalur teks biasa (QRIS nonaktif / gagal dibuat) ──
+          // ── Jalur teks biasa (QRIS nonaktif / >1 tagihan / QR gagal dibuat) ──
           if (!ok) {
-            let formattedMsg = template
-              .replace(/{{nama}}/gi, c.name || 'Pelanggan')
-              .replace(/{{tagihan}}/gi, totalTagihan.toLocaleString('id-ID'))
-              .replace(/{{rincian}}/gi, rincianBulan || '-')
-              .replace(/{{paket}}/gi, c.package_name || '-')
-              .replace(/{{link}}/gi, loginLink)
-              .replace(/{{jatuhtempo}}/gi, jatuhTempo);
+            const formattedMsg = fillReminderTemplate(template, {
+              nama: c.name,
+              paket: c.package_name,
+              tagihan: totalTagihan,
+              rincian: rincianBulan,
+              periode: rincianBulan,
+              jatuhtempo: jatuhTempo,
+              link: loginLink,
+              variationIndex: i
+            });
 
-            formattedMsg = addMessageVariation(formattedMsg, i);
             ok = await sendWA(targetPhone, formattedMsg);
           }
 
@@ -952,5 +1015,6 @@ module.exports = {
   runBillingReminders,
   ensureInvoicesSafetyNet,
   cleanupReminderLogs,
-  isReminderDay
+  isReminderDay,
+  fillReminderTemplate   // diekspor agar bisa diuji terpisah
 };

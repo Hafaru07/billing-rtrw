@@ -149,8 +149,30 @@
             <div class="fg" style="width: 100%;">
               <label class="fl">Isi Pesan WhatsApp</label>
               <textarea class="fc" name="message" rows="8" required style="width: 100%;"><%= autoBillingMsg %></textarea>
-              <div style="font-size: 11px; color: var(--muted); margin-top: 6px;">
-                <i class="bi bi-info-circle"></i> Variabel: <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>, <b>{{jatuhtempo}}</b>, <b>{{link}}</b> (link login otomatis).<br><span style="color:var(--muted)">{{jatuhtempo}} = tanggal isolir pelanggan, mis. <b>10 Agustus 2026</b>.</span>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.7;">
+                <i class="bi bi-info-circle"></i>
+                <b>Pesan inilah</b> yang dikirim pengingat otomatis jam 07:00 — baik sebagai teks biasa
+                maupun sebagai keterangan di bawah gambar QRIS.
+                <br>
+                Variabel: <b>{{nama}}</b>, <b>{{tagihan}}</b>, <b>{{rincian}}</b>, <b>{{paket}}</b>,
+                <b>{{jatuhtempo}}</b>, <b>{{link}}</b> (link login otomatis).
+                <br>
+                <span style="color:var(--muted)">
+                  {{jatuhtempo}} = tanggal isolir pelanggan, mis. <b>10 Agustus 2026</b>.
+                  {{rincian}} = periode tagihan, mis. <b>Agustus 2026</b>.
+                </span>
+                <br>
+                Khusus saat QRIS aktif: <b>{{qris_nominal}}</b>, <b>{{qris_kode}}</b>,
+                <b>{{qris_qr}}</b> (tautan gambar QR).
+                <span style="color:var(--muted)">Bila QRIS sedang mati, ketiganya otomatis dikosongkan
+                — tidak akan tampil mentah di layar pelanggan.</span>
+                <br>
+                <span style="color:#fbbf24">
+                  <i class="bi bi-exclamation-triangle"></i>
+                  Saat QR dilampirkan, <b>{{tagihan}}</b> berisi nominal unik yang tertanam di QR
+                  (mis. Rp 100.010) — bukan nominal bulat. Angka di teks harus sama dengan angka di QR,
+                  kalau berbeda pembayaran tidak terdeteksi otomatis.
+                </span>
               </div>
             </div>
           </div>
