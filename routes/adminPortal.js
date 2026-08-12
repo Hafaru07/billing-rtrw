@@ -1860,10 +1860,14 @@ router.get('/customers', requireAdminSession, requireSidebarMenuAccess('customer
   const importReport = req.session._importReport || null;
   if (req.session._importReport) delete req.session._importReport;
 
+  const fupReport = req.session._fupReport || null;
+  if (req.session._fupReport) delete req.session._fupReport;
+
   res.render('admin/customers', {
     title: 'Data Pelanggan', company: company(), activePage: 'customers',
     customers, stats, packages, routers, olts, odps, collectors, search, filterStatus, selectedRouterId, msg: flashMsg(req),
     importReport,
+    fupReport,
     settings: getSettings()
   });
 });
@@ -2313,6 +2317,69 @@ router.get('/customers/export', requireAdminSession, (req, res) => {
     logger.error('Export error:', e);
     res.status(500).send('Gagal export data.');
   }
+});
+
+// ─── FUP: PENGUJIAN MANUAL ───────────────────────────────────────────────────
+// Cron pemakaian berjalan tiap 10 menit dan pemeriksaan FUP tiap jam. Menunggu
+// selama itu setiap kali ingin memastikan fitur bekerja tidak masuk akal, jadi
+// keduanya bisa dipicu langsung dari panel.
+
+/** Ambil satu sampel pemakaian dari semua router sekarang juga. */
+router.post('/fup/sample-now', requireAdminSession, restrictToAdmin, async (req, res) => {
+  try {
+    const r = await require('../services/fupService').sampleUsage();
+    req.session._msg = {
+      type: 'success',
+      text: `Sampel pemakaian diambil: ${r.sesi} sesi PPPoE dari ${r.router} router, ${r.tercatat} tercatat` +
+            (r.tanpaPelanggan ? `, ${r.tanpaPelanggan} sesi tanpa pelanggan cocok` : '') +
+            `. Sumber data: ${r.sumber.join(', ') || 'tidak ada'}.`
+    };
+  } catch (e) {
+    req.session._msg = { type: 'error', text: 'Gagal mengambil sampel pemakaian: ' + e.message };
+  }
+  res.redirect('/admin/customers');
+});
+
+/** Jalankan pemeriksaan FUP. ?dry=1 hanya menghitung, tidak menyentuh MikroTik. */
+router.post('/fup/check-now', requireAdminSession, restrictToAdmin, async (req, res) => {
+  const dryRun = String(req.body && req.body.dry || '') === '1';
+  try {
+    const r = await require('../services/fupService').runFupCheck({ dryRun });
+    const bagian = [
+      `${r.diperiksa} pelanggan diperiksa`,
+      dryRun ? `${r.diturunkan} akan diturunkan` : `${r.diturunkan} diturunkan`,
+      `${r.sudahTurun} sudah di profile FUP`,
+      `${r.dipulihkan} dipulihkan`,
+      `${r.aman} masih aman`,
+      `${r.dilewati} dilewati`,
+      `${r.gagal} gagal`
+    ];
+    req.session._msg = {
+      type: r.gagal > 0 ? 'error' : 'success',
+      text: (dryRun ? 'Simulasi FUP — tidak ada perubahan di MikroTik. ' : 'Pemeriksaan FUP selesai. ') + bagian.join(', ') + '.'
+    };
+    req.session._fupReport = { ...r, dryRun };
+  } catch (e) {
+    req.session._msg = { type: 'error', text: 'Gagal memeriksa FUP: ' + e.message };
+  }
+  res.redirect('/admin/customers');
+});
+
+/** Uji reset bulanan tanpa menunggu tanggal 1. */
+router.post('/fup/reset-now', requireAdminSession, restrictToAdmin, async (req, res) => {
+  const dryRun = String(req.body && req.body.dry || '') === '1';
+  try {
+    const r = await require('../services/fupService').resetMonthlyFup({ dryRun });
+    req.session._msg = {
+      type: r.gagal > 0 ? 'error' : 'success',
+      text: (dryRun ? 'Simulasi reset FUP. ' : 'Reset FUP dijalankan. ') +
+            `${r.kandidat} pelanggan sedang kena FUP, ${r.dipulihkan} dipulihkan, ${r.dilewati} dilewati, ${r.gagal} gagal.`
+    };
+    req.session._fupReport = { rincian: r.rincian, dryRun, judul: 'Reset FUP' };
+  } catch (e) {
+    req.session._msg = { type: 'error', text: 'Gagal reset FUP: ' + e.message };
+  }
+  res.redirect('/admin/customers');
 });
 
 /**

@@ -852,6 +852,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_usage_period ON customer_usage(period_month, period_year);
 `);
 
+// Penanda sesi PPPoE terakhir yang dicatat.
+//
+// Penghitung byte di MikroTik berlaku PER SESI dan kembali ke nol setiap kali
+// pelanggan tersambung ulang. Tanpa menyimpan identitas sesi, selisih dihitung
+// dengan cara menebak (angka mengecil = dianggap sesi baru), yang meleset bila
+// sesi baru kebetulan sudah melewati angka sesi lama sebelum pengambilan
+// berikutnya. Menyimpan session id membuat pergantian sesi terdeteksi pasti.
+try { db.exec("ALTER TABLE customer_usage ADD COLUMN last_session_id TEXT DEFAULT ''"); } catch (e) {}
+
+// Keadaan FUP per pelanggan.
+//
+// fup_prev_profile menyimpan profile SEBELUM diturunkan, supaya tanggal 1 bisa
+// dikembalikan persis seperti semula — tanpa ini, pelanggan yang pernah kena
+// FUP akan tertahan di kecepatan rendah selamanya.
+try { db.exec("ALTER TABLE customers ADD COLUMN fup_applied INTEGER DEFAULT 0"); } catch (e) {}
+try { db.exec("ALTER TABLE customers ADD COLUMN fup_applied_at DATETIME"); } catch (e) {}
+try { db.exec("ALTER TABLE customers ADD COLUMN fup_prev_profile TEXT"); } catch (e) {}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS digiflazz_products (
     sku TEXT PRIMARY KEY,

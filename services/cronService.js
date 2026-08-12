@@ -8,6 +8,7 @@ const { logger } = require('../config/logger');
 const customerSvc = require('./customerService');
 const mikrotikService = require('./mikrotikService');
 const usageSvc = require('./usageService');
+const fupSvc = require('./fupService');
 const { getSetting, getSettings, getNowLocal, getCurrentDateInTimezone } = require('../config/settingsManager');
 const db = require('../config/database');
 const qrisSvc = require('./qrisService');
@@ -799,95 +800,46 @@ function startCronJobs() {
     }
   }, cronOpts());
 
-  // 6. Track Usage Pelanggan (Data Traffic) - Setiap 10 Menit
+  // 6. Catat Pemakaian Pelanggan — setiap 10 menit
+  //
+  // Yang disimpan adalah SELISIH sejak sampel sebelumnya, bukan angka mentah
+  // dari MikroTik. Dengan begitu total pemakaian hidup di database dan tidak
+  // ikut hilang saat router reboot atau pelanggan tersambung ulang.
   cron.schedule('*/10 * * * *', async () => {
-    const enabled = getSetting('usage_tracking_enabled', true);
-    if (!enabled) return;
-
+    if (!getSetting('usage_tracking_enabled', true)) return;
     try {
-      const routers = mikrotikService.getAllRouters();
-      const customers = customerSvc.getAllCustomers();
-      const customerMap = new Map();
-      customers.forEach(c => { if (c.pppoe_username) customerMap.set(c.pppoe_username, c); });
-
-      for (const r of routers) {
-        try {
-          const actives = await mikrotikService.getPppoeActive(r.id);
-          for (const s of actives) {
-            const username = s.name;
-            const cust = customerMap.get(username);
-            if (!cust) continue;
-
-            const totalIn = parseInt(s['bytes-in']) || 0;
-            const totalOut = parseInt(s['bytes-out']) || 0;
-
-            const now = new Date();
-            const currentUsage = usageSvc.getUsage(cust.id, now.getMonth()+1, now.getFullYear());
-
-            let deltaIn = 0;
-            let deltaOut = 0;
-
-            if (currentUsage) {
-              // Jika total bytes saat ini lebih kecil dari sebelumnya, berarti user baru reconnect (counter reset di mikrotik)
-              if (totalIn < currentUsage.last_total_bytes_in || totalOut < currentUsage.last_total_bytes_out) {
-                deltaIn = totalIn;
-                deltaOut = totalOut;
-              } else {
-                deltaIn = totalIn - currentUsage.last_total_bytes_in;
-                deltaOut = totalOut - currentUsage.last_total_bytes_out;
-              }
-            } else {
-              deltaIn = totalIn;
-              deltaOut = totalOut;
-            }
-
-            if (deltaIn > 0 || deltaOut > 0) {
-              usageSvc.updateUsage(cust.id, deltaIn, deltaOut, totalIn, totalOut);
-            }
-          }
-        } catch (err) {
-          logger.error(`[CRON] Gagal track usage di router ${r.name}: ${err.message}`);
-        }
-      }
+      await fupSvc.sampleUsage();
     } catch (e) {
-      logger.error(`[CRON] Error Usage Tracking: ${e.message}`);
+      logger.error(`[CRON] Gagal mencatat pemakaian: ${e.message}`);
     }
   }, cronOpts());
 
-  // 7. FUP (Fair Usage Policy) Check - Setiap Jam
+  // 7. Pemeriksaan FUP — setiap jam
   cron.schedule('0 * * * *', async () => {
-    logger.info('[CRON] Mengecek FUP Pelanggan...');
+    if (!getSetting('fup_enabled', true)) return;
     try {
-      const customers = customerSvc.getAllCustomers();
-      const now = new Date();
-      const month = now.getMonth() + 1;
-      const year = now.getFullYear();
-
-      for (const c of customers) {
-        if (!c.package_id || !c.pppoe_username) continue;
-        
-        const pkg = customerSvc.getPackageById(c.package_id);
-        if (!pkg || pkg.use_fup !== 1 || !pkg.fup_limit_gb || pkg.fup_limit_gb <= 0 || !pkg.fup_profile_name) continue;
-
-        const usage = usageSvc.getUsage(c.id, month, year);
-        if (!usage) continue;
-
-        const totalGB = (usage.bytes_in + usage.bytes_out) / (1024 * 1024 * 1024);
-        
-        if (totalGB >= pkg.fup_limit_gb) {
-          logger.warn(`[CRON] Pelanggan ${c.name} melewati FUP (${totalGB.toFixed(2)} GB / ${pkg.fup_limit_gb} GB). Menurunkan kecepatan (Ganti Profile)...`);
-          
-          try {
-            // Ganti ke profile FUP yang sudah ditentukan di paket
-            logger.info(`[CRON] Switching ${c.name} to FUP Profile: ${pkg.fup_profile_name}`);
-            await mikrotikService.setPppoeProfile(c.pppoe_username, pkg.fup_profile_name, c.router_id);
-          } catch (err) {
-            logger.error(`[CRON] Gagal apply FUP untuk ${c.name}: ${err.message}`);
-          }
-        }
-      }
+      await fupSvc.runFupCheck();
     } catch (e) {
-      logger.error(`[CRON] Error FUP Check: ${e.message}`);
+      logger.error(`[CRON] Gagal memeriksa FUP: ${e.message}`);
+    }
+  }, cronOpts());
+
+  // 7b. Reset FUP bulanan — tanggal 1 pukul 00:05
+  //
+  // Kuotanya sendiri tidak perlu dihapus: pemakaian dicatat per periode, jadi
+  // bulan baru otomatis mulai dari nol. Yang wajib dikerjakan adalah
+  // MENGEMBALIKAN PROFILE pelanggan yang masih tertahan di kecepatan FUP —
+  // tanpa langkah ini mereka akan lambat selamanya walaupun kuotanya sudah
+  // kembali penuh.
+  //
+  // Dijalankan pukul 00:05, bukan 00:00, supaya tidak berebut dengan tugas
+  // tengah malam lain seperti pembuatan tagihan.
+  cron.schedule('5 0 1 * *', async () => {
+    logger.info('[CRON] Tanggal 1 — mereset FUP dan mengembalikan profile normal...');
+    try {
+      await fupSvc.resetMonthlyFup();
+    } catch (e) {
+      logger.error(`[CRON] Gagal reset FUP bulanan: ${e.message}`);
     }
   }, cronOpts());
 

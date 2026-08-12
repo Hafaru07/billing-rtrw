@@ -107,6 +107,39 @@
     </div>
     <% } %>
 
+    <% if (locals.fupReport) { const f = locals.fupReport; %>
+    <div class="card" style="margin-bottom:16px;border:1px solid rgba(99,102,241,.45)">
+      <div class="card-hd">
+        <h6><i class="bi bi-speedometer2"></i> <%= f.judul || 'Hasil Pemeriksaan FUP' %><%= f.dryRun ? ' (Simulasi — MikroTik tidak disentuh)' : '' %></h6>
+        <button class="btn btn-g btn-sm" onclick="this.closest('.card').remove()">Tutup</button>
+      </div>
+      <div class="card-bd">
+        <div style="overflow-x:auto;max-height:360px;overflow-y:auto">
+          <table class="tbl" style="width:100%;font-size:12.5px">
+            <thead><tr><th style="width:200px">Pelanggan</th><th style="width:150px">Tindakan</th><th>Keterangan</th></tr></thead>
+            <tbody>
+              <% (f.rincian || []).forEach(function(b){ %>
+                <tr>
+                  <td><%= b.nama %></td>
+                  <td>
+                    <% const warna = b.aksi === 'gagal' ? '#fca5a5'
+                                   : (b.aksi === 'diturunkan' || b.aksi === 'akan-diturunkan' || b.aksi === 'sudah-turun') ? '#fdba74'
+                                   : (b.aksi === 'dipulihkan' || b.aksi === 'akan-dipulihkan') ? '#93c5fd' : '#bbf7d0'; %>
+                    <span style="color:<%= warna %>;font-weight:700"><%= b.aksi %></span>
+                  </td>
+                  <td style="color:var(--muted)"><%= b.pesan %></td>
+                </tr>
+              <% }) %>
+              <% if (!f.rincian || f.rincian.length === 0) { %>
+                <tr><td colspan="3" style="color:var(--muted)">Tidak ada pelanggan yang memenuhi syarat FUP. Pastikan paketnya sudah dicentang FUP, batas kuota &gt; 0, dan nama profile FUP terisi.</td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <% } %>
+
     <!-- Stats -->
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
       <div class="sc p"><i class="bi bi-people sc-icon"></i><div class="sc-label"><%= t('admin.customers.stats.total', 'Total') %></div><div class="sc-val"><%= stats.total %></div></div>
@@ -120,6 +153,7 @@
       <div class="card-hd">
         <h6><i class="bi bi-people"></i> <%= t('admin.customers.list', 'Daftar Pelanggan') %> (<%= customers.length %>)</h6>
         <div style="display:flex;gap:8px">
+          <button class="btn btn-g btn-sm" onclick="openModal('fupModal')" title="Uji fitur FUP tanpa menunggu cron"><i class="bi bi-speedometer2"></i> FUP</button>
           <a href="/admin/customers/template" class="btn btn-g btn-sm" title="Template kosong untuk menambah pelanggan baru"><i class="bi bi-file-earmark-plus"></i> Template Import</a>
           <a href="/admin/customers/export" class="btn btn-g btn-sm"><i class="bi bi-file-earmark-excel"></i> <%= t('admin.customers.export_excel', 'Export Excel') %></a>
           <button class="btn btn-g btn-sm" onclick="openModal('importModal')"><i class="bi bi-file-earmark-arrow-up"></i> <%= t('admin.customers.import_excel', 'Import Excel') %></button>
@@ -444,6 +478,68 @@
         <button type="submit" class="btn btn-p"><i class="bi bi-check-lg"></i> Simpan Pelanggan</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Modal FUP -->
+<div class="mo" id="fupModal">
+  <div class="mb" style="max-width:520px">
+    <div class="mh"><span class="mt"><i class="bi bi-speedometer2"></i> Fair Usage Policy (FUP)</span><button class="mc" onclick="closeModal('fupModal')">&times;</button></div>
+    <div class="mbody">
+      <div style="background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.35);border-radius:10px;padding:12px;margin-bottom:16px;font-size:12px;line-height:1.7;color:var(--muted)">
+        <b style="color:var(--fg)">Cara kerja</b><br>
+        Pemakaian diambil dari MikroTik tiap 10 menit, lalu <b>selisihnya ditambahkan</b> ke database.
+        Karena yang disimpan akumulasi, angkanya tidak hilang saat router reboot atau pelanggan
+        tersambung ulang. Pemeriksaan FUP berjalan tiap jam; kuota kembali penuh
+        <b>tanggal 1</b> dan profile pelanggan dikembalikan otomatis.
+        <br><br>
+        <b style="color:var(--fg)">Syarat di Paket Internet:</b> centang FUP, isi Batas Kuota (GB),
+        dan isi nama Profile FUP yang <b>sudah ada di MikroTik</b>.
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <form method="POST" action="/admin/fup/sample-now">
+          <button class="btn btn-g" style="width:100%" type="submit">
+            <i class="bi bi-arrow-repeat"></i> Ambil Pemakaian Sekarang
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Menarik satu sampel dari semua router tanpa menunggu 10 menit. Jalankan dua kali
+            dengan jeda beberapa menit untuk melihat angkanya bertambah.
+          </div>
+        </form>
+
+        <form method="POST" action="/admin/fup/check-now">
+          <input type="hidden" name="dry" value="1">
+          <button class="btn btn-g" style="width:100%" type="submit">
+            <i class="bi bi-eye"></i> Simulasi Cek FUP (aman)
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Menampilkan siapa yang akan diturunkan, tanpa mengubah apa pun di MikroTik.
+          </div>
+        </form>
+
+        <form method="POST" action="/admin/fup/check-now" onsubmit="return confirm('Jalankan FUP sungguhan? Profile pelanggan yang melewati kuota akan diganti dan sesinya diputus agar profile baru berlaku.')">
+          <button class="btn btn-p" style="width:100%" type="submit">
+            <i class="bi bi-lightning-charge"></i> Jalankan Cek FUP Sekarang
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Mengganti profile di MikroTik dan memutus sesi agar profile baru langsung berlaku.
+          </div>
+        </form>
+
+        <form method="POST" action="/admin/fup/reset-now" onsubmit="return confirm('Kembalikan profile semua pelanggan yang sedang kena FUP ke profile normalnya?')">
+          <button class="btn btn-g" style="width:100%" type="submit">
+            <i class="bi bi-arrow-counterclockwise"></i> Uji Reset Bulanan
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Menjalankan tugas tanggal 1 lebih awal: mengembalikan profile normal pelanggan yang kena FUP.
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="mf">
+      <button type="button" class="btn btn-g" onclick="closeModal('fupModal')">Tutup</button>
+    </div>
   </div>
 </div>
 

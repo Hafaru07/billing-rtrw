@@ -731,6 +731,153 @@ async function getPppoeActive(routerId = null) {
   }
 }
 
+/**
+ * Ambil penghitung byte tiap sesi PPPoE yang sedang aktif.
+ *
+ * LATAR BELAKANG
+ * Fungsi getPppoeActive() di atas TIDAK bisa dipakai untuk ini. Selain
+ * proplist-nya tidak menyertakan kolom byte, perintah `/ppp/active/print`
+ * biasa memang tidak mengembalikan penghitung pemakaian sama sekali — yang ada
+ * hanya `limit-bytes-in`/`limit-bytes-out`, dan itu BATAS kuota, bukan
+ * pemakaian. Byte baru muncul pada varian `print stats`.
+ *
+ * Karena dukungan `stats` berbeda-beda antar versi RouterOS, fungsi ini
+ * mencoba dua sumber:
+ *
+ *   1. `/ppp/active/print` dengan flag `stats` — paling langsung.
+ *   2. Antarmuka dinamis `<pppoe-USERNAME>` di `/interface` — dibuat RouterOS
+ *      untuk tiap sesi PPPoE, dan selalu punya rx-byte/tx-byte.
+ *
+ * Arah byte disamakan dari sudut pandang PELANGGAN:
+ *   bytesIn  = data yang DIKIRIM pelanggan (upload)
+ *   bytesOut = data yang DITERIMA pelanggan (download)
+ * Pada antarmuka router, rx = diterima router = upload pelanggan, sehingga
+ * rx-byte dipetakan ke bytesIn dan tx-byte ke bytesOut.
+ *
+ * @returns {Promise<Array<{username:string, sessionId:string, bytesIn:number, bytesOut:number, source:string}>>}
+ */
+async function getPppoeTraffic(routerId = null) {
+  let conn = null;
+  try {
+    conn = await getConnection(routerId);
+
+    const angka = (row, kunci) => {
+      for (const k of kunci) {
+        if (row && row[k] !== undefined && row[k] !== null && row[k] !== '') {
+          const n = parseInt(String(row[k]).replace(/\D/g, ''), 10);
+          if (Number.isFinite(n)) return n;
+        }
+      }
+      return null;
+    };
+
+    // ── Sumber 1: /ppp/active/print stats ──
+    try {
+      const rows = await withTimeout(
+        conn.api.send(['/ppp/active/print', '=stats=']),
+        15000,
+        'getPppoeTraffic-pppStats'
+      );
+
+      const hasil = [];
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const username = String(r.name || '').trim();
+        if (!username) continue;
+        const bIn = angka(r, ['bytes-in', 'bytesIn']);
+        const bOut = angka(r, ['bytes-out', 'bytesOut']);
+        if (bIn === null && bOut === null) continue;   // versi ini tidak mengirim byte
+        hasil.push({
+          username,
+          sessionId: String(r['.id'] || r.id || ''),
+          bytesIn: bIn || 0,
+          bytesOut: bOut || 0,
+          source: 'ppp-active-stats'
+        });
+      }
+
+      if (hasil.length > 0) return hasil;
+      logger.info('[MikroTik] /ppp/active tidak mengembalikan penghitung byte — beralih ke antarmuka PPPoE.');
+    } catch (e) {
+      logger.info(`[MikroTik] /ppp/active stats tidak didukung (${e.message}) — beralih ke antarmuka PPPoE.`);
+    }
+
+    // ── Sumber 2: antarmuka dinamis <pppoe-USERNAME> ──
+    // Sesi aktif dibaca lebih dulu supaya session id tetap didapat; tanpa itu,
+    // sesi yang tersambung ulang tidak bisa dibedakan dari sesi lama.
+    const sesi = new Map();
+    try {
+      const actives = await withTimeout(
+        conn.client.menu('/ppp/active').get(),
+        15000,
+        'getPppoeTraffic-active'
+      );
+      for (const s of (actives || [])) {
+        const n = String(s.name || '').trim();
+        if (n) sesi.set(n, String(s['.id'] || s.id || ''));
+      }
+    } catch (e) {
+      logger.warn(`[MikroTik] Gagal membaca daftar sesi PPPoE: ${e.message}`);
+    }
+
+    const ifaces = await withTimeout(
+      conn.api.send(['/interface/print', '=stats=']),
+      20000,
+      'getPppoeTraffic-iface'
+    );
+
+    const hasil = [];
+    for (const row of (Array.isArray(ifaces) ? ifaces : [])) {
+      const nama = String(row.name || '').trim();
+      // RouterOS menamai antarmuka sesi PPPoE sebagai <pppoe-USERNAME>
+      const m = nama.match(/^<pppoe-(.+)>$/i);
+      if (!m) continue;
+      const username = m[1];
+
+      hasil.push({
+        username,
+        sessionId: sesi.get(username) || '',
+        bytesIn: angka(row, ['rx-byte', 'rxByte', 'rx-bytes']) || 0,
+        bytesOut: angka(row, ['tx-byte', 'txByte', 'tx-bytes']) || 0,
+        source: 'pppoe-interface'
+      });
+    }
+
+    if (hasil.length === 0) {
+      logger.warn('[MikroTik] Tidak ada antarmuka PPPoE aktif yang terbaca — pemakaian tidak bertambah.');
+    }
+    return hasil;
+  } catch (e) {
+    logger.error(`[MikroTik] getPppoeTraffic gagal: ${e.message}`);
+    return [];
+  } finally {
+    if (conn && conn.api) {
+      try { conn.api.close(); } catch (_) { /* abaikan */ }
+    }
+  }
+}
+
+/**
+ * Baca profile yang sedang terpasang pada PPPoE secret.
+ * Dipakai FUP untuk memastikan keadaan nyata di router, bukan sekadar percaya
+ * penanda di database.
+ */
+async function getPppoeSecretProfile(username, routerId = null) {
+  let conn = null;
+  try {
+    conn = await getConnection(routerId);
+    const secrets = await conn.client.menu('/ppp/secret').where('name', String(username || '').trim()).get();
+    if (!secrets || secrets.length === 0) return null;
+    return String(secrets[0].profile || '') || null;
+  } catch (e) {
+    logger.error(`[MikroTik] Gagal membaca profile ${username}: ${e.message}`);
+    return null;
+  } finally {
+    if (conn && conn.api) {
+      try { conn.api.close(); } catch (_) { /* abaikan */ }
+    }
+  }
+}
+
 async function getActivePppoeSessionsMap() {
   const routers = getAllRouters().filter(r => r.is_active === 1 || r.is_active === '1' || r.is_active === true);
   const sessionsMap = new Map();
@@ -1856,6 +2003,8 @@ module.exports = {
   upsertHotspotUser,
   getHotspotProfiles,
   getPppoeActive,
+  getPppoeTraffic,
+  getPppoeSecretProfile,
   getActivePppoeSessionsMap,
   getHotspotActive,
   getIpPools,
