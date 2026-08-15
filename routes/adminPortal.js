@@ -2300,12 +2300,17 @@ router.get('/customers/export', requireAdminSession, (req, res) => {
       'Auto Isolir': c.auto_isolate === 1 ? 'YA' : 'TIDAK',
       'Tgl Isolir': c.isolate_day,
       'ODP': c.odp_name || '-',
+      'OLT': c.olt_name || '',
+      'Port PON': c.pon_port || '',
+      'Kolektor': c.collector_name || '',
       'Latitude': c.lat || '',
       'Longitude': c.lng || '',
       'Catatan': c.notes
     }));
 
-    const ws = XLSX.utils.json_to_sheet(data);
+    // Urutan kolom dikunci ke HEADER_TEMPLATE supaya berkas hasil Export bisa
+    // langsung diunggah balik lewat Import tanpa perlu dirapikan dulu.
+    const ws = XLSX.utils.json_to_sheet(data, { header: importSvc.HEADER_TEMPLATE });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pelanggan');
     
@@ -2399,6 +2404,8 @@ router.get('/customers/template', requireAdminSession, (req, res) => {
     const packages = customerSvc.getAllPackages() || [];
     const routers = mikrotikService.getAllRouters() || [];
     const odps = odpSvc.getAllOdps() || [];
+    const olts = oltSvc.getAllOlts() || [];
+    const collectors = adminSvc.getAllCollectors() || [];
 
     const contohPaket = packages[0] ? packages[0].name : 'P-Lite';
     const contohRouter = routers[0] ? routers[0].name : '';
@@ -2411,7 +2418,8 @@ router.get('/customers/template', requireAdminSession, (req, res) => {
         'Tag ONU': '', 'PPPoE Username': 'budi01', 'Hotspot Username': '',
         'Static IP': '', 'Isolir Profile': 'isolir', 'Status': 'active',
         'Tanggal Pasang': '2026-08-01', 'Auto Isolir': 'YA', 'Tgl Isolir': 10,
-        'ODP': '', 'Latitude': '', 'Longitude': '', 'Catatan': 'Baris contoh — silakan hapus'
+        'ODP': '', 'OLT': '', 'Port PON': '', 'Kolektor': '',
+        'Latitude': '', 'Longitude': '', 'Catatan': 'Baris contoh — silakan hapus'
       }
     ];
 
@@ -2432,6 +2440,9 @@ router.get('/customers/template', requireAdminSession, (req, res) => {
       ['6. Auto Isolir: YA atau TIDAK. Tgl Isolir: angka 1 sampai 31.'],
       ['7. Tipe Koneksi: pppoe, hotspot, atau static.'],
       ['8. Status: active, suspended, atau inactive.'],
+      ['9. ODP, OLT, dan Kolektor ditulis dengan NAMA, bukan angka.'],
+      ['   Boleh dikosongkan. Khusus Kolektor, nama yang salah akan DITOLAK —'],
+      ['   bukan dikosongkan diam-diam — karena menentukan siapa yang menagih.'],
       [''],
       ['PAKET YANG TERSEDIA (tulis persis seperti ini):'],
       ...(packages.length ? packages.map(p => ['  ' + p.name]) : [['  (belum ada paket — buat dulu di menu Paket Internet)']]),
@@ -2440,7 +2451,13 @@ router.get('/customers/template', requireAdminSession, (req, res) => {
       ...(routers.length ? routers.map(r => ['  ' + r.name]) : [['  (belum ada router)']]),
       [''],
       ['ODP YANG TERSEDIA (opsional, boleh dikosongkan):'],
-      ...(odps.length ? odps.map(o => ['  ' + o.name]) : [['  (belum ada ODP)']])
+      ...(odps.length ? odps.map(o => ['  ' + o.name]) : [['  (belum ada ODP)']]),
+      [''],
+      ['OLT YANG TERSEDIA (opsional, boleh dikosongkan):'],
+      ...(olts.length ? olts.map(o => ['  ' + o.name]) : [['  (belum ada OLT)']]),
+      [''],
+      ['KOLEKTOR YANG TERSEDIA (opsional, tapi nama harus persis bila diisi):'],
+      ...(collectors.length ? collectors.map(k => ['  ' + k.name]) : [['  (belum ada kolektor)']])
     ];
     const wsPetunjuk = XLSX.utils.aoa_to_sheet(petunjuk);
     wsPetunjuk['!cols'] = [{ wch: 72 }];

@@ -70,6 +70,7 @@ function getAllCustomers(search = '', routerId = null, filterStatus = '') {
            r.name as router_name,
            o.name as olt_name,
            odp.name as odp_name,
+           col.name as collector_name,
            (SELECT COUNT(*) FROM invoices WHERE customer_id=c.id AND status='unpaid') as unpaid_count,
            u.bytes_in, u.bytes_out
     FROM customers c
@@ -77,6 +78,7 @@ function getAllCustomers(search = '', routerId = null, filterStatus = '') {
     LEFT JOIN routers r ON c.router_id = r.id
     LEFT JOIN olts o ON c.olt_id = o.id
     LEFT JOIN odps odp ON c.odp_id = odp.id
+    LEFT JOIN collectors col ON c.collector_id = col.id
     LEFT JOIN customer_usage u ON u.customer_id = c.id AND u.period_month = ${month} AND u.period_year = ${year}
   `;
 

@@ -19,6 +19,8 @@
  */
 const customerSvc = require('./customerService');
 const odpSvc = require('./odpService');
+const oltSvc = require('./oltService');
+const adminSvc = require('./adminService');
 const mikrotikService = require('./mikrotikService');
 const { logger } = require('../config/logger');
 
@@ -42,17 +44,27 @@ const KOLOM = {
   autoIsolate: ['Auto Isolir', 'auto_isolate', 'Auto Isolate'],
   isolateDay: ['Tgl Isolir', 'isolate_day', 'Tanggal Isolir'],
   odp: ['ODP', 'odp', 'ODP Name', 'Nama ODP'],
+  olt: ['OLT', 'olt', 'Perangkat OLT', 'Nama OLT'],
+  ponPort: ['Port PON', 'pon_port', 'PON Port', 'Port'],
+  collector: ['Kolektor', 'collector', 'Kolektor Penagihan', 'Penagih'],
   lat: ['Latitude', 'latitude', 'Lat', 'lat'],
   lng: ['Longitude', 'longitude', 'Lng', 'lng'],
   notes: ['Catatan', 'notes', 'Note', 'Keterangan']
 };
 
-/** Urutan kolom pada template & export. */
+/**
+ * Urutan kolom pada template & export.
+ *
+ * Kolektor, OLT, dan Port PON ditaruh berdekatan dengan ODP karena sama-sama
+ * data lapangan. Ketiganya ditulis dengan NAMA, bukan ID — admin tidak hafal
+ * bahwa kolektor "Budi" bernomor 3, dan angka yang salah ketik akan menempel
+ * ke orang yang keliru tanpa ketahuan.
+ */
 const HEADER_TEMPLATE = [
   'ID', 'Nama', 'Telepon', 'Email', 'Alamat', 'Paket', 'Router', 'Tipe Koneksi',
   'Tag ONU', 'PPPoE Username', 'Hotspot Username', 'Static IP', 'Isolir Profile',
-  'Status', 'Tanggal Pasang', 'Auto Isolir', 'Tgl Isolir', 'ODP', 'Latitude',
-  'Longitude', 'Catatan'
+  'Status', 'Tanggal Pasang', 'Auto Isolir', 'Tgl Isolir', 'ODP', 'OLT',
+  'Port PON', 'Kolektor', 'Latitude', 'Longitude', 'Catatan'
 ];
 
 /** Ambil nilai kolom dari baris, mencoba semua nama alternatif. */
@@ -186,6 +198,31 @@ function periksaBaris(rowMentah, konteks) {
     if (!odp) catatan.push(`ODP "${namaOdp}" tidak ditemukan — dikosongkan.`);
   }
 
+  // ── OLT: opsional. Salah ketik hanya dicatat, sama seperti ODP, karena
+  //    keduanya hanya keterangan lokasi perangkat — tidak memutus layanan.
+  const namaOlt = teks(ambil(row, 'olt'));
+  let olt = null;
+  if (namaOlt && namaOlt !== '-') {
+    olt = konteks.olts.find(o => String(o.name).trim().toLowerCase() === namaOlt.toLowerCase());
+    if (!olt) catatan.push(`OLT "${namaOlt}" tidak ditemukan — dikosongkan.`);
+  }
+
+  // ── Kolektor: DITOLAK bila salah, tidak sekadar dicatat.
+  //    Kolektor menentukan siapa yang berhak menagih dan menerima setoran.
+  //    Mengosongkannya diam-diam berarti tagihan itu tidak tertagih oleh
+  //    siapa pun, dan baru ketahuan saat uangnya kurang.
+  const namaKolektor = teks(ambil(row, 'collector'));
+  let kolektor = null;
+  if (namaKolektor && namaKolektor !== '-') {
+    kolektor = konteks.collectors.find(k => String(k.name).trim().toLowerCase() === namaKolektor.toLowerCase());
+    if (!kolektor) {
+      return {
+        ok: false,
+        alasan: `Kolektor "${namaKolektor}" tidak ada. Kolektor tersedia: ${konteks.collectors.map(k => k.name).join(', ') || '(belum ada kolektor)'}.`
+      };
+    }
+  }
+
   // ── Tipe koneksi ──
   let koneksi = teks(ambil(row, 'connection')).toLowerCase() || 'pppoe';
   if (!KONEKSI_SAH.includes(koneksi)) {
@@ -237,6 +274,9 @@ function periksaBaris(rowMentah, konteks) {
     package_id: paket ? paket.id : null,
     router_id: router ? router.id : null,
     odp_id: odp ? odp.id : null,
+    olt_id: olt ? olt.id : null,
+    pon_port: teks(ambil(row, 'ponPort')) === '-' ? '' : teks(ambil(row, 'ponPort')),
+    collector_id: kolektor ? kolektor.id : null,
     lat: teks(ambil(row, 'lat')),
     lng: teks(ambil(row, 'lng')),
     genieacs_tag: teks(ambil(row, 'onu')) === '-' ? '' : teks(ambil(row, 'onu')),
@@ -300,6 +340,8 @@ function importCustomers(rows, opsi = {}) {
     packages: customerSvc.getAllPackages() || [],
     routers: mikrotikService.getAllRouters() || [],
     odps: odpSvc.getAllOdps() || [],
+    olts: oltSvc.getAllOlts() || [],
+    collectors: adminSvc.getAllCollectors() || [],
     idAda: new Set(),
     pppoeAda: new Map(),
     teleponAda: new Map()
