@@ -45,10 +45,14 @@ const CMD = {
  *   58mm -> area cetak 48mm @203dpi = 384 dot / 12 = 32 karakter
  * Salah menghitung ini membuat baris membungkus sendiri dan kolom nominal
  * jadi berantakan — jangan diubah tanpa mengukur ulang di printer.
+ *
+ * `margin` adalah jarak kiri-kanan dalam karakter. Tanpa ini teks menempel
+ * ke tepi kiri kertas dan struk terlihat berat sebelah; dengan margin yang
+ * sama di kedua sisi, blok teks duduk di tengah kertas.
  */
 const PROFILES = {
-  '80': { cols: 48, dots: 576, logoDots: 384 },
-  '58': { cols: 32, dots: 384, logoDots: 256 }
+  '80': { cols: 48, dots: 576, logoDots: 384, margin: 2 },
+  '58': { cols: 32, dots: 384, logoDots: 256, margin: 1 }
 };
 
 function profileFor(width) {
@@ -150,8 +154,16 @@ function terbilang(n) {
  * Mengembalikan null bila gambar tidak ada atau gagal dibaca: struk tetap
  * tercetak tanpa logo, karena logo bukan alasan yang sah untuk menggagalkan
  * pencetakan bukti pembayaran.
+ *
+ * @param {string} filePath
+ * @param {number} targetDots  lebar logo yang diinginkan, dalam dot
+ * @param {number} [canvasDots] bila diisi, logo diletakkan di tengah kanvas
+ *        selebar ini. Banyak printer MENGABAIKAN `ESC a` (rata tengah) untuk
+ *        gambar raster dan selalu mencetaknya menempel ke kiri. Menengahkan
+ *        gambar di dalam bitmap-nya sendiri membuat hasilnya tetap di tengah
+ *        pada printer mana pun, tanpa bergantung pada perilaku itu.
  */
-async function buildLogoRaster(filePath, targetDots) {
+async function buildLogoRaster(filePath, targetDots, canvasDots) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return null;
 
@@ -206,21 +218,28 @@ async function buildLogoRaster(filePath, targetDots) {
       [15, 7, 13, 5]
     ];
 
-    const widthBytes = dstW / 8;
-    const data = Buffer.alloc(widthBytes * dstH, 0);
+    const imgBytes = dstW / 8;
+
+    // Kanvas dibulatkan ke byte penuh; sisa 1-7 dot tidak kasat mata pada
+    // 203 dpi (kurang dari 0,9 mm), jadi pembulatan ini aman untuk mata.
+    const canvasBytes = Math.max(imgBytes, Math.floor((canvasDots || dstW) / 8));
+    const padBytes = Math.floor((canvasBytes - imgBytes) / 2);
+
+    const data = Buffer.alloc(canvasBytes * dstH, 0); // 0 = putih
     for (let y = 0; y < dstH; y++) {
+      const rowStart = y * canvasBytes + padBytes;
       for (let x = 0; x < dstW; x++) {
         const threshold = ((BAYER[y & 3][x & 3] + 0.5) / 16) * 255;
         if (lum[y * dstW + x] < threshold) {
           // bit 1 = titik hitam, MSB lebih dulu
-          data[y * widthBytes + (x >> 3)] |= 0x80 >> (x & 7);
+          data[rowStart + (x >> 3)] |= 0x80 >> (x & 7);
         }
       }
     }
 
     const header = Buffer.from([
       GS, 0x76, 0x30, 0x00,
-      widthBytes & 0xff, (widthBytes >> 8) & 0xff,
+      canvasBytes & 0xff, (canvasBytes >> 8) & 0xff,
       dstH & 0xff, (dstH >> 8) & 0xff
     ]);
     return Buffer.concat([header, data]);
@@ -233,13 +252,36 @@ async function buildLogoRaster(filePath, targetDots) {
 // ─── PENYUSUN STRUK ─────────────────────────────────────────────────────────
 
 class Writer {
-  constructor(cols) {
-    this.cols = cols;
+  /**
+   * @param {number} cols    lebar kertas dalam karakter
+   * @param {number} margin  jarak kiri-kanan dalam karakter
+   */
+  constructor(cols, margin = 0) {
+    this.paperCols = cols;
+    this.margin = Math.max(0, Math.min(margin, Math.floor(cols / 4)));
+    this.cols = cols - this.margin * 2;   // lebar area teks yang bisa dipakai
+    this.align = 'left';
     this.parts = [];
   }
   raw(bytes) { this.parts.push(Buffer.from(bytes)); return this; }
   text(s) { this.parts.push(Buffer.from(ascii(s), 'latin1')); return this; }
-  line(s = '') { return this.text(String(s) + '\n'); }
+
+  // Perataan dicatat, bukan sekadar dikirim, karena `line()` perlu tahu
+  // kapan boleh menambahkan indentasi margin.
+  alignLeft() { this.align = 'left'; return this.raw(CMD.ALIGN_LEFT); }
+  alignCenter() { this.align = 'center'; return this.raw(CMD.ALIGN_CENTER); }
+
+  /**
+   * Indentasi hanya diberikan pada baris rata kiri.
+   *
+   * Baris rata tengah sudah ditengahkan printer terhadap lebar kertas PENUH;
+   * menambahkan spasi di depannya justru menggeser teks ke kanan dan membuat
+   * judul tidak lagi sejajar dengan blok di bawahnya.
+   */
+  line(s = '') {
+    const indent = this.align === 'left' ? ' '.repeat(this.margin) : '';
+    return this.text(indent + String(s) + '\n');
+  }
   lines(arr) { for (const l of arr) this.line(l); return this; }
   divider(ch = '-') { return this.line(ch.repeat(this.cols)); }
   bold(on) { return this.raw(on ? CMD.BOLD_ON : CMD.BOLD_OFF); }
@@ -300,7 +342,7 @@ async function buildInvoiceReceipt(o) {
   const verifyCode = String(o.verifyCode || '');
   const printedAt = String(o.printedAt || '');
   const prof = profileFor(o.width);
-  const w = new Writer(prof.cols);
+  const w = new Writer(prof.cols, o.margin != null ? Number(o.margin) : prof.margin);
 
   const isPaid = invoice.status === 'paid';
   const qrisAmount = Number(invoice.qris_amount_unique || 0) || 0;
@@ -319,24 +361,24 @@ async function buildInvoiceReceipt(o) {
   // ── Kepala ──────────────────────────────────────────────────────────────
   if (o.logo !== false) {
     const logoPath = path.join(__dirname, '..', 'public', 'img', 'logo.png');
-    const raster = await buildLogoRaster(logoPath, prof.logoDots);
-    if (raster) w.raw(CMD.ALIGN_CENTER).raw(raster).line().raw(CMD.ALIGN_LEFT);
+    const raster = await buildLogoRaster(logoPath, prof.logoDots, prof.dots);
+    if (raster) w.alignCenter().raw(raster).line().alignLeft();
   }
 
-  w.raw(CMD.ALIGN_CENTER).raw(CMD.SIZE_TALL).bold(true);
-  w.lines(wrapText(settings.company_header || 'ISP', prof.cols));
+  w.alignCenter().raw(CMD.SIZE_TALL).bold(true);
+  w.lines(wrapText(settings.company_header || 'ISP', w.cols));
   w.bold(false).raw(CMD.SIZE_NORMAL);
 
-  if (settings.company_address) w.lines(wrapText(settings.company_address, prof.cols));
+  if (settings.company_address) w.lines(wrapText(settings.company_address, w.cols));
   const phone = (Array.isArray(settings.whatsapp_admin_numbers) && settings.whatsapp_admin_numbers[0])
     ? '+' + settings.whatsapp_admin_numbers[0]
     : (settings.company_phone || '');
-  if (phone) w.lines(wrapText('Telp/WA: ' + phone, prof.cols));
-  w.raw(CMD.ALIGN_LEFT).divider('=');
+  if (phone) w.lines(wrapText('Telp/WA: ' + phone, w.cols));
+  w.alignLeft().divider('=');
 
-  w.raw(CMD.ALIGN_CENTER).bold(true);
+  w.alignCenter().bold(true);
   w.line(isPaid ? 'BUKTI PEMBAYARAN' : 'TAGIHAN INTERNET');
-  w.bold(false).raw(CMD.ALIGN_LEFT).divider();
+  w.bold(false).alignLeft().divider();
 
   // ── Identitas dokumen ───────────────────────────────────────────────────
   w.field(isPaid ? 'No. Struk' : 'No. Tagihan', invNo);
@@ -348,9 +390,9 @@ async function buildInvoiceReceipt(o) {
   w.divider();
 
   // ── Pelanggan ───────────────────────────────────────────────────────────
-  w.bold(true).lines(wrapText('Yth. ' + (customer.name || '-'), prof.cols)).bold(false);
-  w.lines(wrapText('ID/Tag: ' + (customer.phone || customer.genieacs_tag || '-'), prof.cols));
-  if (customer.address) w.lines(wrapText(customer.address, prof.cols));
+  w.bold(true).lines(wrapText('Yth. ' + (customer.name || '-'), w.cols)).bold(false);
+  w.lines(wrapText('ID/Tag: ' + (customer.phone || customer.genieacs_tag || '-'), w.cols));
+  if (customer.address) w.lines(wrapText(customer.address, w.cols));
   w.divider();
 
   // ── Layanan ─────────────────────────────────────────────────────────────
@@ -369,7 +411,7 @@ async function buildInvoiceReceipt(o) {
       w.row(tax.label, 'Rp ' + padLeft(formatRp(tax.amount), 10));
     }
     if (Array.isArray(breakdown.adjustments)) {
-      for (const adj of breakdown.adjustments) w.lines(wrapText('* ' + adj, prof.cols));
+      for (const adj of breakdown.adjustments) w.lines(wrapText('* ' + adj, w.cols));
     }
   } else {
     w.row('Biaya Bulanan ' + periodText, 'Rp ' + padLeft(formatRp(total), 10));
@@ -383,38 +425,38 @@ async function buildInvoiceReceipt(o) {
 
   if (hasQris) {
     w.divider();
-    w.raw(CMD.ALIGN_CENTER).bold(true).line('BAYAR TEPAT SEJUMLAH').bold(false);
+    w.alignCenter().bold(true).line('BAYAR TEPAT SEJUMLAH').bold(false);
     w.raw(CMD.SIZE_DOUBLE).bold(true).line('Rp ' + formatRp(qrisAmount)).bold(false).raw(CMD.SIZE_NORMAL);
-    w.lines(wrapText('Kode unik ' + qrisCode + ' - jangan dibulatkan', prof.cols));
-    w.raw(CMD.ALIGN_LEFT);
+    w.lines(wrapText('Kode unik ' + qrisCode + ' - jangan dibulatkan', w.cols));
+    w.alignLeft();
   }
 
-  w.lines(wrapText('Terbilang: ' + terbilang(payAmount) + ' rupiah', prof.cols));
+  w.lines(wrapText('Terbilang: ' + terbilang(payAmount) + ' rupiah', w.cols));
   w.divider();
 
   // ── Status ──────────────────────────────────────────────────────────────
-  w.raw(CMD.ALIGN_CENTER).bold(true).raw(CMD.SIZE_TALL);
+  w.alignCenter().bold(true).raw(CMD.SIZE_TALL);
   w.line(isPaid ? '*** L U N A S ***' : '*** BELUM LUNAS ***');
   w.raw(CMD.SIZE_NORMAL).bold(false);
 
   if (isPaid) {
-    w.lines(wrapText('Terima kasih atas pembayaran Anda.', prof.cols));
-    w.lines(wrapText('Simpan struk ini sebagai bukti pembayaran yang sah.', prof.cols));
+    w.lines(wrapText('Terima kasih atas pembayaran Anda.', w.cols));
+    w.lines(wrapText('Simpan struk ini sebagai bukti pembayaran yang sah.', w.cols));
   } else {
-    w.lines(wrapText('Mohon segera lakukan pembayaran.', prof.cols));
-    w.lines(wrapText('Lembar ini BUKAN bukti pembayaran.', prof.cols));
+    w.lines(wrapText('Mohon segera lakukan pembayaran.', w.cols));
+    w.lines(wrapText('Lembar ini BUKAN bukti pembayaran.', w.cols));
   }
 
   if (settings.invoice_note) {
     w.line();
-    w.lines(wrapText(String(settings.invoice_note), prof.cols));
+    w.lines(wrapText(String(settings.invoice_note), w.cols));
   }
 
-  w.raw(CMD.ALIGN_LEFT).divider();
-  w.raw(CMD.ALIGN_CENTER);
-  if (verifyCode) w.lines(wrapText('Kode Verifikasi: ' + verifyCode, prof.cols));
-  if (printedAt) w.lines(wrapText('Dicetak: ' + printedAt, prof.cols));
-  w.raw(CMD.ALIGN_LEFT);
+  w.alignLeft().divider();
+  w.alignCenter();
+  if (verifyCode) w.lines(wrapText('Kode Verifikasi: ' + verifyCode, w.cols));
+  if (printedAt) w.lines(wrapText('Dicetak: ' + printedAt, w.cols));
+  w.alignLeft();
 
   // Umpan kertas sebelum potong: tanpa ini, beberapa baris terakhir masih
   // berada di dalam mekanisme printer dan ikut tersobek saat kertas ditarik.
@@ -434,8 +476,36 @@ async function buildInvoiceReceipt(o) {
  * @param {Buffer} buf
  * @returns {string}
  */
-function toPlainText(buf) {
+function toPlainText(buf, cols) {
+  const width = Number(cols) || 0;
   let out = '';
+  let line = '';
+  let align = 0;   // 0 = kiri, 1 = tengah, 2 = kanan
+
+  /**
+   * Baris rata tengah/kanan tidak memuat spasi apa pun di dalam buffer —
+   * yang menggesernya adalah printer, lewat `ESC a`. Kalau pratinjau hanya
+   * membuang perintah dan mencetak teksnya, semua baris tampak rata kiri dan
+   * layar tidak lagi menggambarkan kertas. Di sini perataan itu diperagakan
+   * ulang dengan spasi, supaya pratinjau benar-benar sesuai hasil cetak.
+   */
+  const flush = () => {
+    const body = line.replace(/\s+$/, '');
+    // Baris kosong tetap kosong: menengahkan string kosong hanya menghasilkan
+    // setengah baris spasi yang tidak terlihat di kertas tapi mengotori
+    // pratinjau dan berkas .bin.
+    if (!body) { out += '\n'; line = ''; return; }
+    if (width > 0 && align === 1) {
+      out += ' '.repeat(Math.max(0, Math.floor((width - body.length) / 2))) + body;
+    } else if (width > 0 && align === 2) {
+      out += ' '.repeat(Math.max(0, width - body.length)) + body;
+    } else {
+      out += line;
+    }
+    out += '\n';
+    line = '';
+  };
+
   for (let i = 0; i < buf.length; i++) {
     const b = buf[i];
 
@@ -443,28 +513,33 @@ function toPlainText(buf) {
       // GS v 0 — raster: lewati header 8 byte + seluruh data gambar
       const widthBytes = buf[i + 4] | (buf[i + 5] << 8);
       const height = buf[i + 6] | (buf[i + 7] << 8);
-      out += '[ LOGO ]\n';
+      line += '[ LOGO ]';
+      flush();
       i += 8 + widthBytes * height - 1;
       continue;
     }
 
     if (b === ESC) {
       const n = buf[i + 1];
-      if (n === 0x40) { i += 1; continue; }                       // ESC @
-      if (n === 0x74 || n === 0x61 || n === 0x45 ||
-          n === 0x2d || n === 0x64) { i += 2; continue; }          // ESC t/a/E/-/d n
+      if (n === 0x40) { i += 1; continue; }                        // ESC @
+      if (n === 0x61) { align = buf[i + 2] || 0; i += 2; continue; } // ESC a n
+      if (n === 0x74 || n === 0x45 ||
+          n === 0x2d || n === 0x64) { i += 2; continue; }           // ESC t/E/-/d n
       i += 1; continue;
     }
 
     if (b === GS) {
       const n = buf[i + 1];
-      if (n === 0x21) { i += 2; continue; }                        // GS ! n
-      if (n === 0x56) { i += 3; continue; }                        // GS V m n
+      if (n === 0x21) { i += 2; continue; }                         // GS ! n
+      if (n === 0x56) { i += 3; continue; }                         // GS V m n
       i += 1; continue;
     }
 
-    out += String.fromCharCode(b);
+    if (b === 0x0a) { flush(); continue; }                          // LF
+    line += String.fromCharCode(b);
   }
+
+  if (line) flush();
   return out;
 }
 

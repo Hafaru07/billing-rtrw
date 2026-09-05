@@ -2854,12 +2854,14 @@ router.get('/billing/:id/escpos', requireAdminSession, async (req, res) => {
       return res.send(buf);
     }
 
+    const cols = escposSvc.PROFILES[req.query.width === '58' ? '58' : '80'].cols;
+
     return res.json({
       ok: true,
       invoiceNo: invNo,
       bytes: buf.length,
-      cols: escposSvc.PROFILES[req.query.width === '58' ? '58' : '80'].cols,
-      preview: escposSvc.toPlainText(buf),
+      cols,
+      preview: escposSvc.toPlainText(buf, cols),
       b64: buf.toString('base64')
     });
   } catch (e) {
