@@ -10,6 +10,7 @@ const customerDevice = require('../services/customerDeviceService');
 const customerSvc = require('../services/customerService');
 const billingSvc = require('../services/billingService');
 const invoiceRenderSvc = require('../services/invoiceRenderService');
+const escposSvc = require('../services/escposService');
 const mikrotikService = require('../services/mikrotikService');
 const adminSvc = require('../services/adminService');
 const agentSvc = require('../services/agentService');
@@ -2808,6 +2809,63 @@ router.get('/billing/:id/print', requireAdminSession, (req, res) => {
     verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
     issuedToCustomer: false
   });
+});
+
+/**
+ * Data cetak ESC/POS untuk printer thermal.
+ *
+ * Halaman struk memanggil endpoint ini lalu meneruskan hasilnya ke printer
+ * lewat RawBT (Android) atau Web Bluetooth — tanpa dialog cetak sistem, tanpa
+ * driver, dan tanpa raster A4. Nominal & rincian dihitung ulang di server
+ * memakai invoiceRenderService yang sama dengan invoice A4, supaya struk
+ * termal tidak pernah berbeda angka dengan invoice yang dicetak admin.
+ *
+ * ?width=80|58  lebar kertas   ?logo=0  tanpa logo   ?raw=1  unduh biner mentah
+ */
+router.get('/billing/:id/escpos', requireAdminSession, async (req, res) => {
+  try {
+    const inv = billingSvc.getInvoiceById(req.params.id);
+    if (!inv) return res.status(404).json({ ok: false, error: 'Invoice tidak ditemukan' });
+
+    const customer = customerSvc.getCustomerById(inv.customer_id);
+    if (!customer) return res.status(404).json({ ok: false, error: 'Data pelanggan tidak ditemukan' });
+
+    const buf = await escposSvc.buildInvoiceReceipt({
+      invoice: inv,
+      customer,
+      settings: getSettings(),
+      breakdown: invoiceRenderSvc.buildInvoiceLines(inv),
+      dueInfo: invoiceRenderSvc.buildDueInfo(inv, customer),
+      verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
+      width: req.query.width === '58' ? '58' : '80',
+      logo: req.query.logo !== '0',
+      // Tanggal dibentuk di sini, bukan di service: formatnya harus sama
+      // persis dengan yang tampil di invoice A4.
+      printedAt: getNowLocal(),
+      paidAtText: inv.paid_at ? formatDateLocal(inv.paid_at) : ''
+    });
+
+    const invNo = 'INV-' + inv.period_year + String(inv.period_month).padStart(2, '0') +
+                  '-' + String(inv.id).padStart(5, '0');
+
+    if (req.query.raw === '1') {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${invNo}.bin"`);
+      return res.send(buf);
+    }
+
+    return res.json({
+      ok: true,
+      invoiceNo: invNo,
+      bytes: buf.length,
+      cols: escposSvc.PROFILES[req.query.width === '58' ? '58' : '80'].cols,
+      preview: escposSvc.toPlainText(buf),
+      b64: buf.toString('base64')
+    });
+  } catch (e) {
+    logger.error(`[escpos] Gagal menyusun struk invoice ${req.params.id}: ${e.message}`);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 router.post('/billing/generate', requireAdminSession, express.urlencoded({ extended: true }), (req, res) => {

@@ -939,6 +939,30 @@
         "printed_from": "Dicetak dari Sistem Billing"
       }
     },
+    "thermal": {
+      "title": "Cetak Struk Thermal",
+      "paper_width": "Lebar kertas",
+      "with_logo": "Sertakan logo",
+      "print_now": "Cetak ke Printer Thermal",
+      "print_browser": "Cetak lewat dialog browser",
+      "download_raw": "Unduh .bin",
+      "a4": "Invoice A4",
+      "cols": "kolom",
+      "building": "Menyiapkan data cetak…",
+      "ready": "Siap dikirim ke printer.",
+      "sending": "Mengirim ke RawBT…",
+      "sent": "Terkirim ke RawBT.",
+      "no_app": "RawBT tidak merespons.",
+      "failed": "Gagal:",
+      "prep_failed": "Gagal menyiapkan struk",
+      "rawbt_missing": "Printer tidak merespons?",
+      "rawbt_need": "Struk dikirim lewat aplikasi RawBT. Kalau belum terpasang, tidak akan terjadi apa-apa saat tombol ditekan.",
+      "rawbt_step1": "Pasang",
+      "rawbt_step1b": "dari Play Store.",
+      "rawbt_step2": "Pasangkan (pair) printer Bluetooth 80mm lewat Pengaturan Bluetooth Android.",
+      "rawbt_step3": "Buka RawBT sekali, pilih printer tersebut sebagai perangkat aktif.",
+      "rawbt_step4": "Kembali ke halaman ini, tekan tombol cetak lagi."
+    },
     "print_vouchers": {
       "title": "Cetak Voucher Batch",
       "days": "hari",

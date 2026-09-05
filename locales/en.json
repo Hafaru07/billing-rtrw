@@ -939,6 +939,30 @@
         "printed_from": "Printed from Billing System"
       }
     },
+    "thermal": {
+      "title": "Print Thermal Receipt",
+      "paper_width": "Paper width",
+      "with_logo": "Include logo",
+      "print_now": "Print to Thermal Printer",
+      "print_browser": "Print via browser dialog",
+      "download_raw": "Download .bin",
+      "a4": "A4 Invoice",
+      "cols": "columns",
+      "building": "Preparing print data…",
+      "ready": "Ready to send to printer.",
+      "sending": "Sending to RawBT…",
+      "sent": "Sent to RawBT.",
+      "no_app": "RawBT did not respond.",
+      "failed": "Failed:",
+      "prep_failed": "Failed to prepare receipt",
+      "rawbt_missing": "Printer not responding?",
+      "rawbt_need": "The receipt is sent through the RawBT app. If it is not installed, pressing the button does nothing.",
+      "rawbt_step1": "Install",
+      "rawbt_step1b": "from the Play Store.",
+      "rawbt_step2": "Pair your 80mm Bluetooth printer in Android Bluetooth settings.",
+      "rawbt_step3": "Open RawBT once and select that printer as the active device.",
+      "rawbt_step4": "Come back to this page and press print again."
+    },
     "print_vouchers": {
       "title": "Print Voucher Batch",
       "days": "days",
