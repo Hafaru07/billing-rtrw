@@ -47,6 +47,9 @@ function invoiceNumber(inv) {
  *        '/admin/billing' atau '/collector/invoice'. Dipakai halaman termal
  *        untuk memanggil endpoint ESC/POS dan berpindah ke tampilan A4.
  * @param {string} opts.backUrl  tujuan tombol "Kembali"
+ * @param {{type:string, text:string}} [opts.notice] pesan yang perlu dilihat
+ *        petugas saat halaman terbuka, mis. hasil pengiriman notifikasi
+ *        WhatsApp setelah pembayaran dicatat.
  */
 function renderPrintPage(req, res, opts) {
   const found = loadInvoice(req.params.id);
@@ -64,7 +67,8 @@ function renderPrintPage(req, res, opts) {
       company,
       settings,
       basePath: opts.basePath,
-      backUrl: opts.backUrl
+      backUrl: opts.backUrl,
+      notice: opts.notice || null
     });
   }
 
@@ -85,7 +89,8 @@ function renderPrintPage(req, res, opts) {
     verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
     issuedToCustomer: false,
     basePath: opts.basePath,
-    backUrl: opts.backUrl
+    backUrl: opts.backUrl,
+    notice: opts.notice || null
   });
 }
 

@@ -54,6 +54,11 @@
     .status.err { color: var(--err); }
     .status.busy { color: var(--muted); }
 
+    /* Banner hasil aksi sebelumnya (mis. notifikasi WhatsApp setelah bayar) */
+    .notice-card { font-weight: 600; font-size: 14.5px; padding: 14px 16px; }
+    .notice-card.is-ok   { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+    .notice-card.is-warn { background: var(--warn-bg); border-color: #fde68a; color: var(--warn); }
+
     .notice {
       margin-top: 14px; padding: 12px 14px; border-radius: 10px;
       background: var(--warn-bg); border: 1px solid #fde68a; color: var(--warn);
@@ -93,6 +98,12 @@
 </head>
 <body>
   <div class="wrap">
+    <% if (locals.notice && notice.text) { %>
+      <div class="card no-print notice-card <%= notice.type === 'ok' ? 'is-ok' : 'is-warn' %>">
+        <%= notice.type === 'ok' ? '✅' : '⚠️' %> <%= notice.text %>
+      </div>
+    <% } %>
+
     <div class="card no-print">
       <h1><%= t('admin.thermal.title', 'Cetak Struk Thermal') %></h1>
       <p class="sub" id="doc-label"><%= t('common.loading', 'Memuat…') %></p>

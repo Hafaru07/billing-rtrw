@@ -8,7 +8,7 @@ const customerSvc = require('../services/customerService');
 const adminSvc = require('../services/adminService');
 const attendanceSvc = require('../services/attendanceService');
 const invoicePrint = require('./invoicePrint');
-const { sendPaymentSuccessWA } = require('../services/paymentNotifyService');
+const { sendPaymentSuccessWA, alasanText } = require('../services/paymentNotifyService');
 const { uploadAttendance, removeAttendanceFile } = require('../middleware/attendanceUpload');
 
 function requireCollectorSession(req, res, next) {
@@ -356,11 +356,27 @@ router.get('/', requireCollectorSession, (req, res) => {
 // tanpa harus login sebagai admin. Halaman & data ESC/POS-nya sama persis
 // dengan milik admin (routes/invoicePrint.js).
 
-router.get('/invoice/:id/print', requireCollectorSession, requireInvoiceInScope, (req, res) =>
-  invoicePrint.renderPrintPage(req, res, {
+router.get('/invoice/:id/print', requireCollectorSession, requireInvoiceInScope, (req, res) => {
+  // Hasil notifikasi WhatsApp dibawa lewat ?wa= dari tombol Ajukan, supaya
+  // kolektor melihatnya di halaman cetak — bukan baru setelah menekan Kembali.
+  const wa = String(req.query.wa || '').trim();
+  let notice = null;
+  if (wa === 'ok') {
+    notice = { type: 'ok', text: 'Konfirmasi WhatsApp terkirim ke pelanggan.' };
+  } else if (wa) {
+    notice = {
+      type: 'warn',
+      text: `Konfirmasi WhatsApp TIDAK terkirim (${alasanText(wa)}). ` +
+            `Tagihan tetap tercatat LUNAS — serahkan struk cetak sebagai bukti.`
+    };
+  }
+
+  return invoicePrint.renderPrintPage(req, res, {
     basePath: '/collector/invoice',
-    backUrl: safeCollectorBack(req.query.back)
-  }));
+    backUrl: safeCollectorBack(req.query.back),
+    notice
+  });
+});
 
 router.get('/invoice/:id/escpos', requireCollectorSession, requireInvoiceInScope, invoicePrint.sendEscpos);
 
@@ -431,15 +447,14 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
       // Sekarang memakai service bersama, sehingga pesannya identik dengan
       // yang dikirim saat admin/kasir menyetujui pembayaran.
       const customer = customerSvc.getCustomerById(inv.customer_id);
-      if (customer && customer.phone) {
-        await sendPaymentSuccessWA(
-          customer.phone,
-          customer.name,
-          formatPeriod(inv.period_month, inv.period_year),
-          Number(inv.amount || 0).toLocaleString('id-ID'),
-          collectorLabel
-        );
-      }
+      const notif = await sendPaymentSuccessWA(
+        customer && customer.phone,
+        customer && customer.name,
+        formatPeriod(inv.period_month, inv.period_year),
+        Number(inv.amount || 0).toLocaleString('id-ID'),
+        collectorLabel,
+        'kolektor auto-approve'
+      );
 
       // Buka isolir bila seluruh tagihan pelanggan sudah lunas.
       //
@@ -458,17 +473,30 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
         logger.error(`[Kolektor] Gagal membuka isolir invoice ${invoiceId}: ${e.message}`);
       }
 
-      req.session._msg = {
-        type: 'success',
-        text: `Tagihan ${formatPeriod(inv.period_month, inv.period_year)} atas nama ` +
-              `${(customer && customer.name) || 'pelanggan'} sudah LUNAS.`
-      };
+      // Hasil notifikasi ikut ditampilkan. Kolektor sedang berdiri di depan
+      // pelanggan — kalau pesannya tidak terkirim, dia harus tahu SEKARANG,
+      // bukan setelah pelanggan menelepon karena tidak menerima konfirmasi.
+      const namaPelanggan = (customer && customer.name) || 'pelanggan';
+      req.session._msg = notif.ok
+        ? {
+            type: 'success',
+            text: `Tagihan ${formatPeriod(inv.period_month, inv.period_year)} atas nama ` +
+                  `${namaPelanggan} sudah LUNAS. Konfirmasi WhatsApp terkirim.`
+          }
+        : {
+            type: 'warning',
+            text: `Tagihan ${formatPeriod(inv.period_month, inv.period_year)} atas nama ` +
+                  `${namaPelanggan} sudah LUNAS, tetapi konfirmasi WhatsApp TIDAK terkirim ` +
+                  `(${alasanText(notif.reason)}). Struk tetap bisa dicetak.`
+          };
 
       // Langsung ke halaman cetak supaya kolektor bisa menyerahkan struk di
       // tempat, tanpa harus mencari tagihannya lagi di daftar.
       const back = '/collector' + buildListQuery(req);
       return res.redirect(
-        `/collector/invoice/${invoiceId}/print?format=thermal&back=${encodeURIComponent(back)}`
+        `/collector/invoice/${invoiceId}/print?format=thermal` +
+        `&back=${encodeURIComponent(back)}` +
+        `&wa=${encodeURIComponent(notif.ok ? 'ok' : notif.reason)}`
       );
     } else {
       // Manual approval: insert as pending

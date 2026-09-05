@@ -7,7 +7,11 @@
  * tidak, pelanggan menerima bentuk pesan berbeda tergantung siapa yang
  * kebetulan menerima uangnya.
  *
- * Modul ini menjadi satu-satunya tempat pesan itu disusun dan dikirim.
+ * SETIAP jalur keluar mencatat alasannya ke log dan mengembalikannya ke
+ * pemanggil. Versi sebelumnya hanya mengembalikan `false` tanpa keterangan,
+ * sehingga "kok tidak terkirim?" tidak bisa dijawab tanpa membongkar kode —
+ * padahal penyebabnya biasanya sepele: WhatsApp belum tersambung, fitur
+ * sedang dimatikan, atau nomor pelanggan kosong.
  */
 const { getSetting } = require('../config/settingsManager');
 const { logger } = require('../config/logger');
@@ -21,33 +25,74 @@ const DEFAULT_SUCCESS_TEMPLATE =
   `💳 *Metode:* {{metode}}\n\n` +
   `Layanan internet Anda aktif. Terima kasih atas kerja samanya.`;
 
+/** Keterangan siap-tampil untuk tiap alasan gagal. */
+const ALASAN = {
+  ok:          'Terkirim',
+  wa_disabled: 'fitur WhatsApp dimatikan di Pengaturan',
+  no_phone:    'nomor HP pelanggan kosong',
+  no_text:     'isi pesan kosong',
+  wa_offline:  'bot WhatsApp belum tersambung',
+  send_failed: 'WhatsApp menolak mengirim (nomor tidak terdaftar?)',
+  error:       'terjadi kesalahan teknis'
+};
+
+/** Ubah kode alasan menjadi kalimat untuk ditampilkan ke petugas. */
+function alasanText(reason) {
+  return ALASAN[reason] || String(reason || 'sebab tidak diketahui');
+}
+
 /**
  * Kirim satu pesan WhatsApp ke pelanggan.
  *
- * Mengembalikan false (bukan melempar) pada setiap kegagalan: pembayarannya
- * sendiri sudah tersimpan di database, dan notifikasi yang gagal tidak boleh
- * membatalkan transaksi yang sudah sah.
+ * Tidak pernah melempar: pembayarannya sendiri sudah tersimpan di database,
+ * dan notifikasi yang gagal tidak boleh membatalkan transaksi yang sah.
  *
- * @returns {Promise<boolean>} true bila pesan benar-benar terkirim
+ * @param {string} customerPhone
+ * @param {string} message
+ * @param {string} [konteks] keterangan untuk log, mis. 'kolektor auto-approve'
+ * @returns {Promise<{ok:boolean, reason:string}>}
  */
-async function trySendWhatsappPayment(customerPhone, message) {
-  try {
-    if (!getSetting('whatsapp_enabled', false)) return false;
+async function trySendWhatsappPayment(customerPhone, message, konteks = 'pembayaran') {
+  const to = String(customerPhone || '').trim();
+  const text = String(message || '').trim();
+  const jejak = `[WA-Bayar/${konteks}]`;
 
-    const to = String(customerPhone || '').trim();
-    const text = String(message || '').trim();
-    if (!to || !text) return false;
+  try {
+    if (!getSetting('whatsapp_enabled', false)) {
+      logger.warn(`${jejak} Tidak dikirim: whatsapp_enabled = false di settings.json.`);
+      return { ok: false, reason: 'wa_disabled' };
+    }
+    if (!to) {
+      logger.warn(`${jejak} Tidak dikirim: nomor HP pelanggan kosong.`);
+      return { ok: false, reason: 'no_phone' };
+    }
+    if (!text) {
+      logger.warn(`${jejak} Tidak dikirim: isi pesan kosong.`);
+      return { ok: false, reason: 'no_text' };
+    }
 
     // whatsappBot.mjs adalah ES module — HARUS lewat import() dinamis.
     // `require()` padanya melempar ERR_REQUIRE_ESM.
     const { sendWA, whatsappStatus } = await import('./whatsappBot.mjs');
-    if (!whatsappStatus || whatsappStatus.connection !== 'open') return false;
 
-    await sendWA(to, text);
-    return true;
+    const koneksi = whatsappStatus && whatsappStatus.connection;
+    if (koneksi !== 'open') {
+      logger.warn(`${jejak} Tidak dikirim ke ${to}: bot WhatsApp berstatus "${koneksi || 'tidak diketahui'}", ` +
+                  `bukan "open". Scan ulang di menu Admin > WhatsApp.`);
+      return { ok: false, reason: 'wa_offline' };
+    }
+
+    const terkirim = await sendWA(to, text);
+    if (!terkirim) {
+      logger.warn(`${jejak} sendWA() mengembalikan false untuk ${to}.`);
+      return { ok: false, reason: 'send_failed' };
+    }
+
+    logger.info(`${jejak} Notifikasi terkirim ke ${to}.`);
+    return { ok: true, reason: 'ok' };
   } catch (e) {
-    logger.warn(`[WA-Bayar] Gagal kirim notifikasi ke ${customerPhone}: ${e.message}`);
-    return false;
+    logger.error(`${jejak} Gagal kirim ke ${to}: ${e.message}`);
+    return { ok: false, reason: 'error' };
   }
 }
 
@@ -56,12 +101,13 @@ async function trySendWhatsappPayment(customerPhone, message) {
  *
  * @param {string} customerPhone
  * @param {string} customerName
- * @param {string} periodText  mis. 'September 2026' atau daftar beberapa periode
- * @param {string} amountText  nominal yang sudah diformat, mis. '100.000'
+ * @param {string} periodText  mis. 'September 2026'
+ * @param {string} amountText  nominal terformat, mis. '100.000'
  * @param {string} paidBy      mis. 'Kolektor Anas (@anas)'
- * @returns {Promise<boolean>}
+ * @param {string} [konteks]   keterangan untuk log
+ * @returns {Promise<{ok:boolean, reason:string}>}
  */
-async function sendPaymentSuccessWA(customerPhone, customerName, periodText, amountText, paidBy) {
+async function sendPaymentSuccessWA(customerPhone, customerName, periodText, amountText, paidBy, konteks = 'pembayaran') {
   try {
     const template = db.getAppSetting('whatsapp_payment_success_message', DEFAULT_SUCCESS_TEMPLATE)
                      || DEFAULT_SUCCESS_TEMPLATE;
@@ -72,15 +118,16 @@ async function sendPaymentSuccessWA(customerPhone, customerName, periodText, amo
       .replace(/{{\s*total\s*}}/gi, amountText || '-')
       .replace(/{{\s*metode\s*}}/gi, paidBy || '-');
 
-    return await trySendWhatsappPayment(customerPhone, pesan);
+    return await trySendWhatsappPayment(customerPhone, pesan, konteks);
   } catch (e) {
-    logger.warn(`[WA-Bayar] Gagal menyusun notifikasi: ${e.message}`);
-    return false;
+    logger.error(`[WA-Bayar/${konteks}] Gagal menyusun notifikasi: ${e.message}`);
+    return { ok: false, reason: 'error' };
   }
 }
 
 module.exports = {
   trySendWhatsappPayment,
   sendPaymentSuccessWA,
+  alasanText,
   DEFAULT_SUCCESS_TEMPLATE
 };
