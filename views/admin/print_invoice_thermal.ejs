@@ -1,3 +1,7 @@
+<%
+  const BASE = (locals.basePath || '/admin/billing').replace(/\/+$/, '');
+  const BACK = locals.backUrl || '/admin/billing';
+%>
 <!DOCTYPE html>
 <html lang="<%= lang || 'id' %>">
 <head>
@@ -129,8 +133,8 @@
       <div class="btn-row">
         <button class="btn" id="btn-browser">🖨 <%= t('admin.thermal.print_browser', 'Cetak lewat dialog browser') %></button>
         <a class="btn" id="lnk-raw" href="#" download>⬇ <%= t('admin.thermal.download_raw', 'Unduh .bin') %></a>
-        <a class="btn" href="/admin/billing/<%= invoice.id %>/print"><%= t('admin.thermal.a4', 'Invoice A4') %></a>
-        <a class="btn" href="/admin/billing"><%= t('common.back', 'Kembali') %></a>
+        <a class="btn" href="<%= BASE %>/<%= invoice.id %>/print"><%= t('admin.thermal.a4', 'Invoice A4') %></a>
+        <a class="btn" href="<%= BACK %>"><%= t('common.back', 'Kembali') %></a>
       </div>
     </div>
 
@@ -159,6 +163,7 @@
 
     (function () {
       var INVOICE_ID = <%= Number(invoice.id) %>;
+      var BASE_PATH = <%- JSON.stringify(BASE) %>;
       var STORE_KEY = 'thermal.paperWidth';
 
       var elWidth   = document.getElementById('paper-width');
@@ -187,7 +192,7 @@
       }
 
       function endpoint(extra) {
-        return '/admin/billing/' + INVOICE_ID + '/escpos'
+        return BASE_PATH + '/' + INVOICE_ID + '/escpos'
              + '?width=' + encodeURIComponent(elWidth.value)
              + '&logo=' + (elLogo.checked ? '1' : '0')
              + (extra || '');

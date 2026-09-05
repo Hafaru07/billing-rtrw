@@ -10,7 +10,7 @@ const customerDevice = require('../services/customerDeviceService');
 const customerSvc = require('../services/customerService');
 const billingSvc = require('../services/billingService');
 const invoiceRenderSvc = require('../services/invoiceRenderService');
-const escposSvc = require('../services/escposService');
+const invoicePrint = require('./invoicePrint');
 const mikrotikService = require('../services/mikrotikService');
 const adminSvc = require('../services/adminService');
 const agentSvc = require('../services/agentService');
@@ -327,36 +327,10 @@ router.get('/set-active-router', requireAdminSession, (req, res) => {
   return res.redirect(referer);
 });
 
-async function trySendWhatsappPayment(customerPhone, message) {
-  try {
-    if (!getSetting('whatsapp_enabled', false)) return false;
-    const to = String(customerPhone || '').trim();
-    if (!to) return false;
-    const { sendWA, whatsappStatus } = await import('../services/whatsappBot.mjs');
-    if (!whatsappStatus || whatsappStatus.connection !== 'open') return false;
-    await sendWA(to, String(message || '').trim());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function sendPaymentSuccessWA(customerPhone, customerName, periodText, amountText, paidBy) {
-  try {
-    const defaultSuccess = `Yth. Pelanggan {{nama}},\n\n*PEMBAYARAN BERHASIL (LUNAS)*\n\n📅 *Periode:* {{periode}}\n💰 *Total Bayar:* Rp {{total}}\n💳 *Metode:* {{metode}}\n\nLayanan internet Anda aktif. Terima kasih atas kerja samanya.`;
-    const template = db.getAppSetting('whatsapp_payment_success_message', defaultSuccess);
-
-    const formattedMsg = template
-      .replace(/{{nama}}/gi, customerName || 'Pelanggan')
-      .replace(/{{periode}}/gi, periodText || '-')
-      .replace(/{{total}}/gi, amountText || '-')
-      .replace(/{{metode}}/gi, paidBy || '-');
-
-    return await trySendWhatsappPayment(customerPhone, formattedMsg);
-  } catch (e) {
-    return false;
-  }
-}
+// Notifikasi "pembayaran berhasil" dipakai bersama portal kolektor —
+// definisinya tinggal satu di services/paymentNotifyService.js supaya
+// pelanggan menerima bentuk pesan yang sama dari pintu pembayaran mana pun.
+const { trySendWhatsappPayment, sendPaymentSuccessWA } = require('../services/paymentNotifyService');
 
 // Middleware strictly for Admin
 function restrictToAdmin(req, res, next) {
@@ -2777,98 +2751,16 @@ router.get('/billing', requireAdminSession, requireSidebarMenuAccess('billing'),
 });
 
 
-router.get('/billing/:id/print', requireAdminSession, (req, res) => {
-  const inv = billingSvc.getInvoiceById(req.params.id);
-  if (!inv) return res.status(404).send('Invoice tidak ditemukan');
+const ADMIN_PRINT_CTX = { basePath: '/admin/billing', backUrl: '/admin/billing' };
 
-  const customer = customerSvc.getCustomerById(inv.customer_id);
-  if (!customer) return res.status(404).send('Data pelanggan tidak ditemukan');
-
-  const settings = getSettings();
-  const company = settings.company_header || 'ALIJAYA DIGITAL NETWORK';
-
-  // Format struk termal 58mm (printer kasir) — tetap dipertahankan
-  if (String(req.query.format || '').toLowerCase() === 'thermal') {
-    return res.render('admin/print_invoice_thermal', { invoice: inv, customer, company, settings });
-  }
-
-  // Detail paket untuk badge kecepatan (speed_down tidak ikut di getCustomerById)
-  let pkg = null;
-  try {
-    if (customer.package_id) pkg = customerSvc.getPackageById(customer.package_id);
-  } catch (e) { /* opsional, invoice tetap tercetak tanpa ini */ }
-
-  res.render('admin/print_invoice', {
-    invoice: inv,
-    customer,
-    pkg,
-    company,
-    settings,
-    breakdown: invoiceRenderSvc.buildInvoiceLines(inv),
-    dueInfo: invoiceRenderSvc.buildDueInfo(inv, customer),
-    verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
-    issuedToCustomer: false
-  });
-});
+router.get('/billing/:id/print', requireAdminSession, (req, res) =>
+  invoicePrint.renderPrintPage(req, res, ADMIN_PRINT_CTX));
 
 /**
- * Data cetak ESC/POS untuk printer thermal.
- *
- * Halaman struk memanggil endpoint ini lalu meneruskan hasilnya ke printer
- * lewat RawBT (Android) atau Web Bluetooth — tanpa dialog cetak sistem, tanpa
- * driver, dan tanpa raster A4. Nominal & rincian dihitung ulang di server
- * memakai invoiceRenderService yang sama dengan invoice A4, supaya struk
- * termal tidak pernah berbeda angka dengan invoice yang dicetak admin.
- *
- * ?width=80|58  lebar kertas   ?logo=0  tanpa logo   ?raw=1  unduh biner mentah
+ * Data cetak ESC/POS untuk printer thermal — dipakai halaman struk termal
+ * untuk mengirim struk ke RawBT tanpa dialog cetak sistem.
  */
-router.get('/billing/:id/escpos', requireAdminSession, async (req, res) => {
-  try {
-    const inv = billingSvc.getInvoiceById(req.params.id);
-    if (!inv) return res.status(404).json({ ok: false, error: 'Invoice tidak ditemukan' });
-
-    const customer = customerSvc.getCustomerById(inv.customer_id);
-    if (!customer) return res.status(404).json({ ok: false, error: 'Data pelanggan tidak ditemukan' });
-
-    const buf = await escposSvc.buildInvoiceReceipt({
-      invoice: inv,
-      customer,
-      settings: getSettings(),
-      breakdown: invoiceRenderSvc.buildInvoiceLines(inv),
-      dueInfo: invoiceRenderSvc.buildDueInfo(inv, customer),
-      verifyCode: invoiceRenderSvc.invoiceVerifyCode(inv),
-      width: req.query.width === '58' ? '58' : '80',
-      logo: req.query.logo !== '0',
-      // Tanggal dibentuk di sini, bukan di service: formatnya harus sama
-      // persis dengan yang tampil di invoice A4.
-      printedAt: getNowLocal(),
-      paidAtText: inv.paid_at ? formatDateLocal(inv.paid_at) : ''
-    });
-
-    const invNo = 'INV-' + inv.period_year + String(inv.period_month).padStart(2, '0') +
-                  '-' + String(inv.id).padStart(5, '0');
-
-    if (req.query.raw === '1') {
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${invNo}.bin"`);
-      return res.send(buf);
-    }
-
-    const cols = escposSvc.PROFILES[req.query.width === '58' ? '58' : '80'].cols;
-
-    return res.json({
-      ok: true,
-      invoiceNo: invNo,
-      bytes: buf.length,
-      cols,
-      preview: escposSvc.toPlainText(buf, cols),
-      b64: buf.toString('base64')
-    });
-  } catch (e) {
-    logger.error(`[escpos] Gagal menyusun struk invoice ${req.params.id}: ${e.message}`);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
+router.get('/billing/:id/escpos', requireAdminSession, invoicePrint.sendEscpos);
 
 router.post('/billing/generate', requireAdminSession, express.urlencoded({ extended: true }), (req, res) => {
   try {

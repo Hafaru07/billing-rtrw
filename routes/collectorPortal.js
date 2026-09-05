@@ -7,11 +7,63 @@ const billingSvc = require('../services/billingService');
 const customerSvc = require('../services/customerService');
 const adminSvc = require('../services/adminService');
 const attendanceSvc = require('../services/attendanceService');
+const invoicePrint = require('./invoicePrint');
+const { sendPaymentSuccessWA } = require('../services/paymentNotifyService');
 const { uploadAttendance, removeAttendanceFile } = require('../middleware/attendanceUpload');
 
 function requireCollectorSession(req, res, next) {
   if (req.session && req.session.isCollector && req.session.collectorId) return next();
   return res.redirect('/collector/login');
+}
+
+/**
+ * Apakah kolektor ini boleh menyentuh tagihan tersebut?
+ *
+ * Memakai batasan yang PERSIS sama dengan daftar tagihan di dasbor kolektor
+ * (`c.collector_id = ? OR c.collector_id IS NULL`). Tanpa pemeriksaan ini,
+ * menebak angka pada URL cukup untuk membuka struk pelanggan kolektor lain.
+ */
+function collectorCanAccessInvoice(collectorId, invoiceId) {
+  return !!db.prepare(`
+    SELECT 1
+    FROM invoices i
+    JOIN customers c ON c.id = i.customer_id
+    WHERE i.id = ? AND (c.collector_id = ? OR c.collector_id IS NULL)
+  `).get(Number(invoiceId), Number(collectorId));
+}
+
+/** Middleware: tolak tagihan di luar wilayah kolektor. */
+function requireInvoiceInScope(req, res, next) {
+  if (collectorCanAccessInvoice(req.session.collectorId, req.params.id)) return next();
+  return res.status(404).send('Tagihan tidak ditemukan');
+}
+
+/**
+ * Tujuan tombol "Kembali" pada halaman cetak.
+ *
+ * Hanya menerima alamat di dalam portal kolektor — parameter ?back= berasal
+ * dari URL, jadi tanpa pembatasan ini halaman cetak bisa dipakai mengarahkan
+ * kolektor ke situs luar.
+ */
+function safeCollectorBack(raw) {
+  const candidate = String(raw || '').trim();
+  if (!candidate.startsWith('/collector')) return '/collector';
+  if (candidate.startsWith('//')) return '/collector';
+  return candidate;
+}
+
+/**
+ * Susun ulang filter daftar tagihan dari form yang dikirim.
+ * Dipakai agar kolektor kembali ke halaman yang sama persis setelah beraksi.
+ * @returns {string} '?month=9&year=2026...' atau '' bila tidak ada filter
+ */
+function buildListQuery(req) {
+  const qs = new URLSearchParams();
+  for (const key of ['month', 'year', 'status', 'search']) {
+    if (req.body && req.body[key]) qs.set(key, String(req.body[key]));
+  }
+  const s = qs.toString();
+  return s ? '?' + s : '';
 }
 
 function company() {
@@ -299,6 +351,19 @@ router.get('/', requireCollectorSession, (req, res) => {
   });
 });
 
+// ─── CETAK INVOICE / STRUK DI LAPANGAN ──────────────────────────────────────
+// Kolektor menagih di depan pelanggan, jadi struk harus bisa dicetak dari HP
+// tanpa harus login sebagai admin. Halaman & data ESC/POS-nya sama persis
+// dengan milik admin (routes/invoicePrint.js).
+
+router.get('/invoice/:id/print', requireCollectorSession, requireInvoiceInScope, (req, res) =>
+  invoicePrint.renderPrintPage(req, res, {
+    basePath: '/collector/invoice',
+    backUrl: safeCollectorBack(req.query.back)
+  }));
+
+router.get('/invoice/:id/escpos', requireCollectorSession, requireInvoiceInScope, invoicePrint.sendEscpos);
+
 router.post('/payment-request', requireCollectorSession, express.urlencoded({ extended: true }), async (req, res) => {
   try {
     const invoiceId = Number(req.body.invoice_id || 0);
@@ -308,6 +373,14 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
     const inv = billingSvc.getInvoiceById(invoiceId);
     if (!inv) throw new Error('Tagihan tidak ditemukan');
     if (String(inv.status || '').toLowerCase() === 'paid') throw new Error('Tagihan sudah lunas');
+
+    // Batas wilayah yang sama dengan daftar tagihan di dasbor. Tanpa ini,
+    // mengirim invoice_id apa pun lewat form cukup untuk melunasi tagihan
+    // pelanggan kolektor lain — dan pada auto-approve, uangnya langsung
+    // tercatat atas nama kolektor yang mengirim.
+    if (!collectorCanAccessInvoice(req.session.collectorId, invoiceId)) {
+      throw new Error('Tagihan ini di luar wilayah tagih Anda');
+    }
 
     const existingPending = db.prepare(`
       SELECT id FROM collector_payment_requests
@@ -347,26 +420,56 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
         VALUES (?, ?, ?, ?, ?, 'approved', 'system', 'Auto-Approve', 'Otomatis disetujui (kolektor setting aktif)', CURRENT_TIMESTAMP)
       `).run(collectorId, invoiceId, Number(inv.customer_id || 0), amount, note);
 
-      // Send WhatsApp notification to customer
+      // Notifikasi WhatsApp ke pelanggan.
+      //
+      // Sebelumnya blok ini memanggil `require('../services/whatsappBot.mjs')`
+      // lalu `waBot.sendMessage(...)`. Keduanya salah: berkas itu ES module
+      // (require() padanya melempar ERR_REQUIRE_ESM) dan fungsi yang ada
+      // bernama `sendWA`, bukan `sendMessage`. Error-nya ditelan catch, jadi
+      // notifikasi ini TIDAK PERNAH terkirim sejak awal.
+      //
+      // Sekarang memakai service bersama, sehingga pesannya identik dengan
+      // yang dikirim saat admin/kasir menyetujui pembayaran.
       const customer = customerSvc.getCustomerById(inv.customer_id);
       if (customer && customer.phone) {
-        const msg =
-          `✅ *PEMBAYARAN BERHASIL*\n\n` +
-          `👤 *Pelanggan:* ${customer.name}\n` +
-          `🧾 *Invoice:* #${inv.id}\n` +
-          `📅 *Periode:* ${formatPeriod(inv.period_month, inv.period_year)}\n` +
-          `💰 *Nominal Tagihan:* Rp ${Number(inv.amount || 0).toLocaleString('id-ID')}\n` +
-          `🏷️ *Dibayar Via:* ${collectorLabel}\n\n` +
-          `Terima kasih.`;
-        try {
-          const waBot = require('../services/whatsappBot.mjs');
-          await waBot.sendMessage(customer.phone, msg);
-        } catch (e) {
-          logger.error('Failed to send WA notification for auto-approved collector payment:', e);
-        }
+        await sendPaymentSuccessWA(
+          customer.phone,
+          customer.name,
+          formatPeriod(inv.period_month, inv.period_year),
+          Number(inv.amount || 0).toLocaleString('id-ID'),
+          collectorLabel
+        );
       }
 
-      req.session._msg = { type: 'success', text: 'Pembayaran berhasil diproses dan tagihan sudah lunas (Auto-Approve kolektor aktif).' };
+      // Buka isolir bila seluruh tagihan pelanggan sudah lunas.
+      //
+      // Jalur approval admin sudah melakukan ini; jalur auto-approve belum —
+      // akibatnya pelanggan terisolir yang membayar tunai ke kolektor tetap
+      // terputus meski tagihannya sudah ditandai lunas.
+      try {
+        const fresh = customerSvc.getAllCustomers().find(x => Number(x.id) === Number(inv.customer_id));
+        if (fresh && fresh.status === 'suspended' && Number(fresh.unpaid_count) === 0) {
+          await customerSvc.activateCustomer(inv.customer_id);
+          logger.info(`[Kolektor] Isolir dibuka untuk ${fresh.name} — semua tagihan lunas.`);
+        }
+      } catch (e) {
+        // Pembayarannya sudah sah dan tersimpan; kegagalan membuka isolir
+        // tidak boleh membatalkan itu. Admin bisa membuka manual.
+        logger.error(`[Kolektor] Gagal membuka isolir invoice ${invoiceId}: ${e.message}`);
+      }
+
+      req.session._msg = {
+        type: 'success',
+        text: `Tagihan ${formatPeriod(inv.period_month, inv.period_year)} atas nama ` +
+              `${(customer && customer.name) || 'pelanggan'} sudah LUNAS.`
+      };
+
+      // Langsung ke halaman cetak supaya kolektor bisa menyerahkan struk di
+      // tempat, tanpa harus mencari tagihannya lagi di daftar.
+      const back = '/collector' + buildListQuery(req);
+      return res.redirect(
+        `/collector/invoice/${invoiceId}/print?format=thermal&back=${encodeURIComponent(back)}`
+      );
     } else {
       // Manual approval: insert as pending
       db.prepare(`
@@ -379,13 +482,7 @@ router.post('/payment-request', requireCollectorSession, express.urlencoded({ ex
   } catch (e) {
     req.session._msg = { type: 'error', text: 'Gagal: ' + (e.message || String(e)) };
   }
-  const qs = new URLSearchParams();
-  if (req.body.month) qs.set('month', String(req.body.month));
-  if (req.body.year) qs.set('year', String(req.body.year));
-  if (req.body.status) qs.set('status', String(req.body.status));
-  if (req.body.search) qs.set('search', String(req.body.search));
-  const suffix = qs.toString() ? ('?' + qs.toString()) : '';
-  res.redirect('/collector' + suffix);
+  res.redirect('/collector' + buildListQuery(req));
 });
 
 module.exports = router;

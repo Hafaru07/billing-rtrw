@@ -532,6 +532,32 @@ function getUnpaidInvoicesByCustomerId(customerId) {
   `).all(customerId);
 }
 
+/**
+ * Tagihan belum lunas TERBARU untuk setiap pelanggan, dalam satu query.
+ *
+ * Dipakai pengingat WhatsApp untuk menentukan jatuh tempo yang benar. Tanpa
+ * ini, pengingat harus menembak database sekali per pelanggan hanya untuk
+ * menyusun daftar target — padahal tahap itu sengaja dibuat murah supaya
+ * bisa dijalankan berulang kali oleh cron penyapu tiap 30 menit.
+ *
+ * @returns {Map<number, object>} customer_id -> baris invoice terbaru
+ */
+function getLatestUnpaidInvoicePerCustomer() {
+  const rows = db.prepare(`
+    SELECT id, customer_id, period_month, period_year, amount, status,
+           qris_unique_code, qris_amount_unique
+    FROM invoices
+    WHERE status = 'unpaid'
+    ORDER BY customer_id ASC, period_year DESC, period_month DESC
+  `).all();
+
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.customer_id)) map.set(r.customer_id, r);
+  }
+  return map;
+}
+
 function getTodayRevenue() {
   return db.prepare(`
     SELECT SUM(amount) as total, COUNT(*) as count 
@@ -640,6 +666,7 @@ function updatePaymentInfo(invoiceId, data) {
 module.exports = {
   getInvoicesByAny,
   getUnpaidInvoicesByCustomerId,
+  getLatestUnpaidInvoicePerCustomer,
   generateMonthlyInvoices, ensureCurrentMonthInvoices, generateInvoiceForCustomer, createInstallProrataCatchUpInvoice, payInvoiceForCustomerPeriod, payInvoicesForCustomerMonths, getPaidMonthsForCustomerYear, getCustomerBillingYearSummary, getAllInvoices, getInvoiceById,
   markAsPaid, markAsUnpaid, deleteInvoice,
   getInvoiceSummary, getMonthlyRevenue,

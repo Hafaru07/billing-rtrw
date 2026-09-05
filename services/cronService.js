@@ -80,36 +80,63 @@ function daysInMonth(year, month1to12) {
 const REMINDER_DAYS_BEFORE = [5, 1];
 
 /**
- * Cari tanggal jatuh tempo BERIKUTNYA untuk pelanggan.
+ * Jatuh tempo SEBUAH TAGIHAN: isolate_day pada bulan periode tagihan itu.
  *
- * Tahan terhadap tanggal isolir yang beragam (karena tanggal pasang = tanggal
- * tagih):
- *  - isolate_day melebihi jumlah hari bulan ini (mis. 31 di Februari)
- *    -> digeser ke hari terakhir bulan tersebut.
- *  - bila jatuh tempo bulan ini sudah lewat, otomatis lompat ke bulan depan.
- *    Ini yang membuat isolate_day = 1 bekerja: pada akhir Agustus, jatuh
- *    temponya adalah 1 September, sehingga H-5 dan H-1 jatuh di akhir Agustus.
+ * Versi sebelumnya mencari "kemunculan isolate_day berikutnya di kalender",
+ * lepas dari tagihan mana yang sebenarnya menunggak. Untuk isolate_day kecil
+ * (1-5) keduanya jatuh di bulan yang berbeda, dan pengingat mengumumkan
+ * tenggat yang bukan milik tagihan yang disebut di pesan yang sama:
  *
+ *   27 Sep, isolate_day 2 -> pesan: "tagihan Agustus & September,
+ *                                    jatuh tempo 2 Oktober"
+ *   padahal invoice September sendiri tertulis jatuh tempo 2 September,
+ *   dan pelanggan sudah diisolir sejak tanggal itu.
+ *
+ * Rumusnya kini sama persis dengan invoiceRenderService.buildDueInfo(),
+ * sehingga pesan WhatsApp, invoice cetak, dan portal pelanggan menyebut
+ * tanggal yang sama untuk tagihan yang sama.
+ *
+ * @param {number} dueDay  isolate_day pelanggan
+ * @param {{period_month:number, period_year:number}} invoice
  * @returns {Date|null} tengah malam pada tanggal jatuh tempo
  */
-function resolveDueDate(dueDay, today) {
+function invoiceDueDate(dueDay, invoice) {
   const d = Number(dueDay);
+  const m = Number(invoice && invoice.period_month);
+  const y = Number(invoice && invoice.period_year);
   if (!Number.isFinite(d) || d < 1 || d > 31) return null;
+  if (!Number.isFinite(m) || m < 1 || m > 12) return null;
+  if (!Number.isFinite(y) || y < 2000) return null;
 
-  const y = today.getFullYear();
-  const m = today.getMonth();                       // 0-11
-  const todayMid = new Date(y, m, today.getDate());
+  // isolate_day melebihi jumlah hari bulan itu (mis. 31 di Februari)
+  // -> digeser ke hari terakhir bulan tersebut.
+  const last = daysInMonth(y, m);
+  return new Date(y, m - 1, Math.min(d, last));
+}
 
-  // Kandidat bulan ini
-  const lastThis = daysInMonth(y, m + 1);
-  const dueThis = new Date(y, m, Math.min(d, lastThis));
-  if (dueThis.getTime() >= todayMid.getTime()) return dueThis;
-
-  // Sudah lewat -> pakai bulan berikutnya
-  const nextY = m === 11 ? y + 1 : y;
-  const nextM = m === 11 ? 0 : m + 1;
-  const lastNext = daysInMonth(nextY, nextM + 1);
-  return new Date(nextY, nextM, Math.min(d, lastNext));
+/**
+ * Tahap pengingat yang MASIH MUNGKIN untuk suatu tanggal jatuh tempo.
+ *
+ * Tagihan bulan berjalan baru terbit tanggal 1, jadi jarak terjauh yang bisa
+ * dijangkau pengingat adalah (isolate_day - 1) hari. Pada isolate_day 1-5,
+ * H-5 jatuh sebelum tagihannya ada — kalau tetap dipaksa, pelanggan itu tidak
+ * pernah dapat pengingat sama sekali.
+ *
+ * Karena itu tahap yang tidak terjangkau diganti satu pengingat paling awal
+ * yang masih mungkin:
+ *
+ *   isolate_day 10 -> H-5, H-1   (tidak berubah)
+ *   isolate_day 4  -> H-3, H-1
+ *   isolate_day 2  -> H-1
+ *   isolate_day 1  -> H-0 (hari jatuh tempo itu sendiri, sebelum isolir 02:00)
+ */
+function reminderStagesFor(dueDay) {
+  const maxLead = Math.max(0, Number(dueDay) - 1);
+  const stages = REMINDER_DAYS_BEFORE.filter((d) => d <= maxLead);
+  if (stages.length < REMINDER_DAYS_BEFORE.length && !stages.includes(maxLead)) {
+    stages.push(maxLead);
+  }
+  return [...new Set(stages)].sort((a, b) => b - a);
 }
 
 /** Selisih hari penuh antara hari ini dan tanggal jatuh tempo. */
@@ -120,22 +147,30 @@ function daysUntilDue(dueDate, today) {
 }
 
 /**
- * Tahap pengingat untuk hari ini.
+ * Tahap pengingat untuk hari ini, dihitung dari tagihan yang menunggak.
  *
- * @returns {{stage:number, dueDate:Date}|null} null bila hari ini bukan
- *          H-5 maupun H-1, sehingga pelanggan tidak dikirimi apa pun.
+ * Tagihan yang sudah LEWAT jatuh tempo tidak menghasilkan tahap apa pun:
+ * pelanggan itu sudah diisolir oleh cron 02:00, sehingga mengirimi mereka
+ * "bayar sebelum jatuh tempo" hanya menjanjikan tenggang waktu yang tidak
+ * pernah ada.
+ *
+ * @param {number} dueDay
+ * @param {Date} today
+ * @param {{period_month:number, period_year:number}} invoice tagihan terbaru
+ *        yang belum lunas — tagihan inilah yang tenggatnya diumumkan.
+ * @returns {{stage:number, dueDate:Date}|null}
  */
-function getReminderStage(dueDay, today) {
-  const dueDate = resolveDueDate(dueDay, today);
+function getReminderStage(dueDay, today, invoice) {
+  const dueDate = invoiceDueDate(dueDay, invoice);
   if (!dueDate) return null;
   const left = daysUntilDue(dueDate, today);
-  if (!REMINDER_DAYS_BEFORE.includes(left)) return null;
+  if (!reminderStagesFor(dueDay).includes(left)) return null;
   return { stage: left, dueDate };
 }
 
 /** Dipertahankan untuk pemanggil lama: cukup tahu perlu kirim atau tidak. */
-function isReminderDay(dueDay, today) {
-  return getReminderStage(dueDay, today) !== null;
+function isReminderDay(dueDay, today, invoice) {
+  return getReminderStage(dueDay, today, invoice) !== null;
 }
 
 // Helper: Exponential backoff untuk error handling
@@ -396,6 +431,10 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
   const customers = customerSvc.getAllCustomers();
   const settled = opts.ignoreSettled ? new Set() : getSettledCustomerIds(dateKey);
 
+  // Satu query untuk semua pelanggan: jatuh tempo yang diumumkan harus milik
+  // tagihan yang benar-benar menunggak, bukan tanggal kalender berikutnya.
+  const latestUnpaid = billingSvc.getLatestUnpaidInvoicePerCustomer();
+
   const targetCustomers = [];
   const seenPhones = new Set();
   for (const c of customers) {
@@ -412,15 +451,21 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
     if (unpaidCount <= 0) continue;
 
     const dueDay = Number(c.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10) || 10;
-    const stageInfo = getReminderStage(dueDay, today);
-    if (!stageInfo) continue;   // bukan H-5 maupun H-1 -> tidak dikirimi
+
+    // Tagihan terbaru yang belum lunas menentukan tenggat yang diumumkan.
+    const latestInv = latestUnpaid.get(Number(c.id));
+    if (!latestInv) continue;   // unpaid_count tidak sinkron -> lewati
+
+    const stageInfo = getReminderStage(dueDay, today, latestInv);
+    if (!stageInfo) continue;   // bukan hari pengingat -> tidak dikirimi
 
     seenPhones.add(digits);
     if (settled.has(Number(c.id))) continue; // sudah diproses hari ini
 
     // Tempelkan info tahap & jatuh tempo agar tidak dihitung dua kali di bawah
-    c._reminderStage = stageInfo.stage;      // 5 atau 1
+    c._reminderStage = stageInfo.stage;
     c._dueDate = stageInfo.dueDate;
+    c._dueInvoice = latestInv;
     targetCustomers.push(c);
   }
 
@@ -435,8 +480,11 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
         phone: c.phone,
         package_name: c.package_name || '-',
         isolate_day: Number(c.isolate_day || 0) || Number(getSetting('isolir_day', 10) || 10),
-        stage: c._reminderStage,                        // 5 = H-5, 1 = H-1
+        stage: c._reminderStage,                        // 5 = H-5, 1 = H-1, dst
         jatuh_tempo: formatDateLong(c._dueDate),
+        // Periode tagihan yang tenggatnya diumumkan — dipisah dari daftar
+        // tunggakan supaya admin bisa melihat keduanya cocok saat menguji.
+        periode_jatuh_tempo: formatPeriod(c._dueInvoice.period_month, c._dueInvoice.period_year),
         unpaid_count: unpaid.length,
         total_tagihan: total,
         periode: formatPeriodList(unpaid)
@@ -598,12 +646,16 @@ async function runBillingReminders(trigger = 'manual', opts = {}) {
 
           // ── Jalur teks biasa (QRIS nonaktif / >1 tagihan / QR gagal dibuat) ──
           if (!ok) {
+            // {{periode}} = periode tagihan yang tenggatnya diumumkan;
+            // {{rincian}} = seluruh periode yang masih menunggak. Dua-duanya
+            // dibedakan supaya pelanggan yang punya tunggakan lebih dari satu
+            // bulan tetap melihat tenggat yang benar untuk tagihan terbarunya.
             const formattedMsg = fillReminderTemplate(template, {
               nama: c.name,
               paket: c.package_name,
               tagihan: totalTagihan,
               rincian: rincianBulan,
-              periode: rincianBulan,
+              periode: formatPeriod(c._dueInvoice.period_month, c._dueInvoice.period_year),
               jatuhtempo: jatuhTempo,
               link: loginLink,
               variationIndex: i
